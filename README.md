@@ -15,6 +15,8 @@ What you'll find in this repository
   convenient builder-based API for VOIP use-cases.
 - `examples/karaoke_loopback.rs` — example that captures system loopback + mic
   and runs AEC in a processing thread.
+- `examples/karaoke_loopback_delayed.rs` — delayed-loopback example that
+  simulates playback latency to exercise AEC delay estimation.
 - `tests/voip.rs` — unit tests that exercise the wrapper API.
 
 Key features
@@ -31,7 +33,6 @@ Quick start (development)
    PowerShell:
 
 ```powershell
-cd C:/Users/nikos/Desktop/Projects/aec3
 cargo run --example karaoke_loopback
 ```
 
@@ -67,6 +68,37 @@ let mut out = vec![0.0f32; capture_frame.len()];
 let metrics = pipeline.process(&capture_frame, Some(&render_frame), false, &mut out)?;
 println!("AEC metrics: {:?}", metrics);
 ```
+
+Delayed-loopback example (simulating playback latency)
+------------------------------------------------------
+The `examples/karaoke_loopback_delayed.rs` example demonstrates how to
+simulate a playback / speaker-path delay and exercise the AEC's delay
+estimation and alignment logic. Important note: to simulate the real-world
+behavior of a delayed speaker path you should delay the capture path (the
+microphone frames) relative to the far-end reference, or provide an explicit
+delay hint with `set_audio_buffer_delay`. Delaying the render (far-end)
+reference itself will make the canceller attempt to remove audio that has
+not yet occurred and prevents the filter from converging.
+
+The example uses the wrapper's lower-level methods directly for clarity:
+
+- `handle_render_frame(&mut, render_frame)` — feed far-end frames as they are
+  captured from system loopback. This keeps the reference aligned with what
+  was actually played.
+- `process_capture_frame(&mut, capture_frame, level_change, out)` — process
+  microphone frames after they have been delayed to simulate playback latency.
+
+High-level pattern used by the example:
+
+1. Forward loopback frames immediately into `handle_render_frame`.
+2. Buffer incoming capture frames with timestamps in the processing thread.
+3. Only process a capture frame once it is older than `target_delay` (e.g.
+   20 ms). Before processing a delayed capture frame, drain any pending
+   render frames into the AEC so the canceller sees the freshest far-end
+   audio for that capture slot.
+
+This preserves the proper timing relationship between far-end and near-end
+signals and allows the AEC to estimate and remove echo correctly.
 
 API summary
 -----------
