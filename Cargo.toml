@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Angelos-Ermis Mangos"]
 license = "MIT OR BSD-3-Clause"
+description = "An acoustic echo canceller written in rust based on the WebRTC aec3 project"
 
 [dependencies]
 nalgebra = "0.34.1"
