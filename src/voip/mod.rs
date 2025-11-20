@@ -58,7 +58,11 @@ impl VoipAec3Builder {
 
     /// Consumes the builder and creates the [`VoipAec3`] pipeline.
     pub fn build(self) -> VoipResult<VoipAec3> {
-        if !valid_full_band_rate(self.sample_rate_hz) {
+        // Allow standard full-band rates (16/32/48 kHz) and also 44.1 kHz as
+        // a special-case sampling rate. 44.1 kHz is processed by internally
+        // running the AEC at 48 kHz while resampling input/output to/from
+        // 44.1 kHz as needed by the surrounding pipeline.
+        if !(valid_full_band_rate(self.sample_rate_hz) || self.sample_rate_hz == 44_100) {
             return Err(VoipAec3Error::UnsupportedSampleRate(self.sample_rate_hz));
         }
         if self.render_channels == 0 || self.capture_channels == 0 {
@@ -71,9 +75,19 @@ impl VoipAec3Builder {
         let chosen_config = self.config.unwrap_or_else(|| {
             EchoCanceller3::create_default_config(self.render_channels, self.capture_channels)
         });
+        // Use an internal full-band rate for the AEC core. For 44.1 kHz input
+        // we run the internal AEC at 48 kHz to match the library's multi-band
+        // expectations while keeping the external stream configuration at
+        // 44.1 kHz.
+        let internal_sample_rate = if self.sample_rate_hz == 44_100 {
+            48_000
+        } else {
+            self.sample_rate_hz
+        };
+
         let mut aec3 = EchoCanceller3::new(
             chosen_config,
-            self.sample_rate_hz,
+            internal_sample_rate,
             self.render_channels,
             self.capture_channels,
         );
@@ -89,17 +103,27 @@ impl VoipAec3Builder {
             StreamConfig::new(self.sample_rate_hz, self.render_channels, false);
         let frame_samples = capture_stream_config.num_frames();
 
+        // Create audio buffers. When the external rate is 44.1 kHz, the
+        // internal AEC buffer rate must be a supported full-band rate
+        // (48 kHz). In that case, construct buffers that resample between
+        // 44.1 kHz (input/output) and 48 kHz (internal buffer).
+        let buffer_rate = if self.sample_rate_hz == 44_100 {
+            internal_sample_rate as usize
+        } else {
+            sample_rate
+        };
+
         let capture_buffer = AudioBuffer::from_sample_rates(
             sample_rate,
             self.capture_channels,
-            sample_rate,
+            buffer_rate,
             self.capture_channels,
             sample_rate,
         );
         let render_buffer = AudioBuffer::from_sample_rates(
             sample_rate,
             self.render_channels,
-            sample_rate,
+            buffer_rate,
             self.render_channels,
             sample_rate,
         );
@@ -375,7 +399,7 @@ impl fmt::Display for VoipAec3Error {
             VoipAec3Error::UnsupportedSampleRate(rate) => {
                 write!(
                     f,
-                    "unsupported sample rate {rate} Hz (expected 16, 32, or 48 kHz)"
+                    "unsupported sample rate {rate} Hz (expected 16, 32, 44.1 or 48 kHz)"
                 )
             }
             VoipAec3Error::InvalidChannelCount { render, capture } => write!(
