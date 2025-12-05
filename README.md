@@ -1,3 +1,5 @@
+[![crates.io](https://img.shields.io/crates/v/aec3.svg)](https://crates.io/crates/aec3)
+
 aec3 — Rust port of WebRTC AEC3
 ================================
 
