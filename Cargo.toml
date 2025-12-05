@@ -8,7 +8,6 @@ description = "An acoustic echo canceller written in rust based on the WebRTC ae
 repository = "https://github.com/RubyBit/aec3-rs"
 
 [dependencies]
-nalgebra = "0.34.1"
 num-complex = "0.4.6"
 rustfft = "6.4.1"
 crossbeam-channel = "0.5.15"
