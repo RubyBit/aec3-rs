@@ -124,8 +124,7 @@ Notes and integration tips
 - Frame shape: the wrapper expects interleaved f32 frames sized as
   `frame_samples * channels`. `frame_samples()` returns the per-channel
   length for 10 ms frames (e.g. 480 for 48 kHz, 160 for 16 kHz).
-- Supported sample rates are intentionally gated to the full-band rates used
-  by the reference (16/32/48 kHz). If you need other rates, resample before
+- Supported sample rates are intentionally gated from 16kHz to 48kHz. If you need other rates, resample before
   feeding frames to the wrapper.
 - When you have both render and capture frames available at the same time,
   prefer calling `process(capture, Some(render), ...)` so the pipeline sees
@@ -135,6 +134,16 @@ Contributing
 ------------
 PRs welcome. Follow standard Rust contribution practices: ensure `cargo test`
 passes and run `cargo fmt` before submitting.
+
+Community projects
+------------------
+There are a few community-maintained projects that integrate with or wrap this
+crate. For example:
+
+- aec3-py — a community Python wrapper for this crate: https://github.com/RustedBytes/aec3-py
+
+If you maintain a project that uses or wraps `aec3`, please open a PR to add it
+here so others can find it easily.
 
 License
 -------
