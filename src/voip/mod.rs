@@ -5,7 +5,7 @@ use crate::api::{
     control::{EchoControl, Metrics},
 };
 use crate::audio_processing::aec3::{
-    aec3_common::valid_full_band_rate, echo_canceller3::EchoCanceller3,
+    echo_canceller3::EchoCanceller3,
 };
 use crate::audio_processing::audio_buffer::AudioBuffer;
 use crate::audio_processing::high_pass_filter::HighPassFilter;
@@ -17,7 +17,8 @@ pub type VoipResult<T> = std::result::Result<T, VoipAec3Error>;
 /// Builder for [`VoipAec3`].
 #[derive(Debug, Clone)]
 pub struct VoipAec3Builder {
-    sample_rate_hz: i32,
+    render_sample_rate_hz: i32,
+    capture_sample_rate_hz: i32,
     render_channels: usize,
     capture_channels: usize,
     enable_high_pass: bool,
@@ -27,9 +28,13 @@ pub struct VoipAec3Builder {
 
 impl VoipAec3Builder {
     /// Creates a new builder for the specified sample rate and channel layout.
+    /// 
+    /// sample_rate_hz: Sample rate in Hz for both devices (e.g., 16000, 32000, 44100, 48000).
+    /// You can override this sample rate with the other functions if needed.
     pub fn new(sample_rate_hz: i32, render_channels: usize, capture_channels: usize) -> Self {
         Self {
-            sample_rate_hz,
+            render_sample_rate_hz: sample_rate_hz, // TODO: Maybe change interface instead? Seems a bit odd
+            capture_sample_rate_hz: sample_rate_hz,
             render_channels,
             capture_channels,
             enable_high_pass: true,
@@ -56,15 +61,25 @@ impl VoipAec3Builder {
         self
     }
 
+    pub fn capture_sample_rate_hz(mut self, sample_rate_hz: i32) -> Self {
+        self.capture_sample_rate_hz = sample_rate_hz;
+        self
+    }
+
+    pub fn render_sample_rate_hz(mut self, sample_rate_hz: i32) -> Self {
+        self.render_sample_rate_hz = sample_rate_hz;
+        self
+    }
+
     /// Consumes the builder and creates the [`VoipAec3`] pipeline.
     pub fn build(self) -> VoipResult<VoipAec3> {
-        // Allow standard full-band rates (16/32/48 kHz) and also 44.1 kHz as
-        // a special-case sampling rate. 44.1 kHz is processed by internally
-        // running the AEC at 48 kHz while resampling input/output to/from
-        // 44.1 kHz as needed by the surrounding pipeline.
-        if !(valid_full_band_rate(self.sample_rate_hz) || self.sample_rate_hz == 44_100) {
-            return Err(VoipAec3Error::UnsupportedSampleRate(self.sample_rate_hz));
+        if !self.valid_sample_rates(self.capture_sample_rate_hz, self.render_sample_rate_hz) {
+            return Err(VoipAec3Error::UnsupportedSampleRate {
+                render: self.render_sample_rate_hz,
+                capture: self.capture_sample_rate_hz,
+            });
         }
+        
         if self.render_channels == 0 || self.capture_channels == 0 {
             return Err(VoipAec3Error::InvalidChannelCount {
                 render: self.render_channels,
@@ -78,11 +93,22 @@ impl VoipAec3Builder {
         // Use an internal full-band rate for the AEC core. For 44.1 kHz input
         // we run the internal AEC at 48 kHz to match the library's multi-band
         // expectations while keeping the external stream configuration at
-        // 44.1 kHz.
-        let internal_sample_rate = if self.sample_rate_hz == 44_100 {
-            48_000
-        } else {
-            self.sample_rate_hz
+        // 44.1 kHz (as it will be resampled).
+        let internal_sample_rate = {
+            // check which sample rate is lower than the other if any
+            if self.capture_sample_rate_hz == 44_100 || self.render_sample_rate_hz == 44_100 { // if any is 44.1kHz
+                48_000
+            } else {
+                // if any is 16kHz, use 16kHz, else if any is 32kHz use 32kHz, else use 48kHz
+                let min_rate = self.capture_sample_rate_hz.min(self.render_sample_rate_hz);
+                if min_rate <= 16_000 {
+                    16_000
+                } else if min_rate <= 32_000 {
+                    32_000
+                } else {
+                    48_000
+                }
+            }
         };
 
         let mut aec3 = EchoCanceller3::new(
@@ -96,51 +122,43 @@ impl VoipAec3Builder {
             aec3.set_audio_buffer_delay(delay);
         }
 
-        let sample_rate = self.sample_rate_hz as usize;
         let capture_stream_config =
-            StreamConfig::new(self.sample_rate_hz, self.capture_channels, false);
+            StreamConfig::new(self.capture_sample_rate_hz, self.capture_channels, false);
         let render_stream_config =
-            StreamConfig::new(self.sample_rate_hz, self.render_channels, false);
-        let frame_samples = capture_stream_config.num_frames();
+            StreamConfig::new(self.render_sample_rate_hz, self.render_channels, false);
 
-        // Create audio buffers. When the external rate is 44.1 kHz, the
-        // internal AEC buffer rate must be a supported full-band rate
-        // (48 kHz). In that case, construct buffers that resample between
-        // 44.1 kHz (input/output) and 48 kHz (internal buffer).
-        let buffer_rate = if self.sample_rate_hz == 44_100 {
-            internal_sample_rate as usize
-        } else {
-            sample_rate
-        };
+        let capture_frame_samples = capture_stream_config.num_frames();
+        let render_frame_samples = render_stream_config.num_frames();
 
         let capture_buffer = AudioBuffer::from_sample_rates(
-            sample_rate,
+            self.capture_sample_rate_hz as usize,
             self.capture_channels,
-            buffer_rate,
+            internal_sample_rate as usize,
             self.capture_channels,
-            sample_rate,
+            self.capture_sample_rate_hz as usize,
         );
         let render_buffer = AudioBuffer::from_sample_rates(
-            sample_rate,
+            self.render_sample_rate_hz as usize,
             self.render_channels,
-            buffer_rate,
+            internal_sample_rate as usize,
             self.render_channels,
-            sample_rate,
+            self.render_sample_rate_hz as usize,
         );
 
-        let capture_scratch = allocate_planar_storage(self.capture_channels, frame_samples);
-        let render_scratch = allocate_planar_storage(self.render_channels, frame_samples);
-        let output_scratch = allocate_planar_storage(self.capture_channels, frame_samples);
+        let capture_scratch = allocate_planar_storage(self.capture_channels, capture_frame_samples);
+        let render_scratch = allocate_planar_storage(self.render_channels, render_frame_samples);
+        let output_scratch = allocate_planar_storage(self.capture_channels, capture_frame_samples);
         let hp_scratch = self
             .enable_high_pass
             .then(|| allocate_planar_storage(self.capture_channels, AudioBuffer::SPLIT_BAND_SIZE));
         let hp_filter = self
             .enable_high_pass
-            .then(|| HighPassFilter::new(self.sample_rate_hz, self.capture_channels));
+            .then(|| HighPassFilter::new(internal_sample_rate, self.capture_channels));
 
         Ok(VoipAec3 {
-            sample_rate_hz: self.sample_rate_hz,
-            frame_samples,
+            sample_rate_hz: self.capture_sample_rate_hz,
+            capture_frame_samples,
+            render_frame_samples,
             render_channels: self.render_channels,
             capture_channels: self.capture_channels,
             aec3,
@@ -155,13 +173,23 @@ impl VoipAec3Builder {
             hp_filter,
         })
     }
+
+    fn valid_sample_rates(&self, capture_rate: i32, render_rate: i32) -> bool {
+        if (capture_rate < 16_000 || capture_rate > 48_000)
+            || (render_rate < 16_000 || render_rate > 48_000)
+        {
+            return false;
+        }
+        true
+    }
 }
 
 /// High-level wrapper that mirrors the WebRTC AEC3 reference usage pattern
 /// while exposing an ergonomic Rust API for VoIP pipelines.
 pub struct VoipAec3 {
     sample_rate_hz: i32,
-    frame_samples: usize,
+    capture_frame_samples: usize,
+    render_frame_samples: usize,
     render_channels: usize,
     capture_channels: usize,
     aec3: EchoCanceller3,
@@ -187,8 +215,13 @@ impl VoipAec3 {
     }
 
     /// Number of samples per channel expected for each 10 ms frame.
-    pub fn frame_samples(&self) -> usize {
-        self.frame_samples
+    pub fn capture_frame_samples(&self) -> usize {
+        self.capture_frame_samples
+    }
+
+    /// Number of samples per channel expected for each 10 ms render frame.
+    pub fn render_frame_samples(&self) -> usize {
+        self.render_frame_samples
     }
 
     /// Returns the capture sample rate configured for the pipeline.
@@ -211,19 +244,19 @@ impl VoipAec3 {
         validate_frame_length(
             render_frame.len(),
             self.render_channels,
-            self.frame_samples,
+            self.render_frame_samples,
             FrameKind::Render,
         )?;
         copy_interleaved_to_planar(
             render_frame,
             self.render_channels,
-            self.frame_samples,
+            self.render_frame_samples,
             &mut self.render_scratch,
         );
         let render_refs: Vec<&[f32]> = self
             .render_scratch
             .iter()
-            .map(|channel| &channel[..self.frame_samples])
+            .map(|channel| &channel[..self.render_frame_samples])
             .collect();
         self.render_buffer
             .copy_from(&render_refs, &self.render_stream_config);
@@ -243,21 +276,21 @@ impl VoipAec3 {
         validate_frame_length(
             capture_frame.len(),
             self.capture_channels,
-            self.frame_samples,
+            self.capture_frame_samples,
             FrameKind::Capture,
         )?;
-        validate_output_length(output.len(), self.capture_channels, self.frame_samples)?;
+        validate_output_length(output.len(), self.capture_channels, self.capture_frame_samples)?;
 
         copy_interleaved_to_planar(
             capture_frame,
             self.capture_channels,
-            self.frame_samples,
+            self.capture_frame_samples,
             &mut self.capture_scratch,
         );
         let capture_refs: Vec<&[f32]> = self
             .capture_scratch
             .iter()
-            .map(|channel| &channel[..self.frame_samples])
+            .map(|channel| &channel[..self.capture_frame_samples])
             .collect();
         self.capture_buffer
             .copy_from(&capture_refs, &self.capture_stream_config);
@@ -283,14 +316,14 @@ impl VoipAec3 {
         let mut output_refs: Vec<&mut [f32]> = self
             .output_scratch
             .iter_mut()
-            .map(|channel| &mut channel[..self.frame_samples])
+            .map(|channel| &mut channel[..self.capture_frame_samples])
             .collect();
         self.capture_buffer
             .copy_to_stream(&self.capture_stream_config, &mut output_refs);
         planar_to_interleaved(
             &self.output_scratch,
             self.capture_channels,
-            self.frame_samples,
+            self.capture_frame_samples,
             output,
         );
 
@@ -386,7 +419,7 @@ fn planar_to_interleaved(
 /// Error type produced by the VoIP wrapper.
 #[derive(Debug, Clone, PartialEq)]
 pub enum VoipAec3Error {
-    UnsupportedSampleRate(i32),
+    UnsupportedSampleRate { render: i32, capture: i32 },
     InvalidChannelCount { render: usize, capture: usize },
     CaptureFrameSize { expected: usize, actual: usize },
     RenderFrameSize { expected: usize, actual: usize },
@@ -396,10 +429,10 @@ pub enum VoipAec3Error {
 impl fmt::Display for VoipAec3Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VoipAec3Error::UnsupportedSampleRate(rate) => {
+            VoipAec3Error::UnsupportedSampleRate { render, capture } => {
                 write!(
                     f,
-                    "unsupported sample rate {rate} Hz (expected 16, 32, 44.1 or 48 kHz)"
+                    "unsupported sample rate (render={render} Hz, capture={capture} Hz) (expected between 16kHz and 48kHz)"
                 )
             }
             VoipAec3Error::InvalidChannelCount { render, capture } => write!(
