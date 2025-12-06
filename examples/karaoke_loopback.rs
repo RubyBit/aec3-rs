@@ -13,7 +13,7 @@ fn processing_thread(
     sample_rate: usize,
     channels: usize,
 ) {
-    let mut pipeline = VoipAec3::builder(sample_rate as i32, channels, channels)
+    let mut pipeline = VoipAec3::builder(sample_rate, channels, channels)
         .initial_delay_ms(116)
         .build()
         .expect("failed to create AEC pipeline");

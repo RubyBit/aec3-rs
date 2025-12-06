@@ -4,14 +4,14 @@ const CHUNK_SIZE_MS: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamConfig {
-    sample_rate_hz: i32,
+    sample_rate_hz: usize,
     num_channels: usize,
     has_keyboard: bool,
     num_frames: usize,
 }
 
 impl StreamConfig {
-    pub fn new(sample_rate_hz: i32, num_channels: usize, has_keyboard: bool) -> Self {
+    pub fn new(sample_rate_hz: usize, num_channels: usize, has_keyboard: bool) -> Self {
         let num_frames = frames_from_rate(sample_rate_hz);
         Self {
             sample_rate_hz,
@@ -21,11 +21,11 @@ impl StreamConfig {
         }
     }
 
-    pub fn sample_rate_hz(&self) -> i32 {
+    pub fn sample_rate_hz(&self) -> usize {
         self.sample_rate_hz
     }
 
-    pub fn set_sample_rate_hz(&mut self, rate: i32) {
+    pub fn set_sample_rate_hz(&mut self, rate: usize) {
         self.sample_rate_hz = rate;
         self.num_frames = frames_from_rate(rate);
     }
@@ -55,9 +55,9 @@ impl StreamConfig {
     }
 }
 
-fn frames_from_rate(rate: i32) -> usize {
-    if rate <= 0 {
+fn frames_from_rate(rate: usize) -> usize {
+    if rate == 0 {
         return 0;
     }
-    (CHUNK_SIZE_MS * rate as usize) / 1000
+    (CHUNK_SIZE_MS * rate) / 1000
 }

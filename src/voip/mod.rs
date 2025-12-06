@@ -17,9 +17,10 @@ pub type VoipResult<T> = std::result::Result<T, VoipAec3Error>;
 /// Builder for [`VoipAec3`].
 #[derive(Debug, Clone)]
 pub struct VoipAec3Builder {
-    render_sample_rate_hz: i32,
-    capture_sample_rate_hz: i32,
-    render_channels: usize,
+    // Maybe u32 is better? I don't think it matters except if this is used in a 16bit chip somehow
+    render_sample_rate_hz: usize,
+    capture_sample_rate_hz: usize,
+    render_channels: usize, // This could be u16
     capture_channels: usize,
     enable_high_pass: bool,
     config: Option<EchoCanceller3Config>,
@@ -31,7 +32,7 @@ impl VoipAec3Builder {
     /// 
     /// sample_rate_hz: Sample rate in Hz for both devices (e.g., 16000, 32000, 44100, 48000).
     /// You can override this sample rate with the other functions if needed.
-    pub fn new(sample_rate_hz: i32, render_channels: usize, capture_channels: usize) -> Self {
+    pub fn new(sample_rate_hz: usize, render_channels: usize, capture_channels: usize) -> Self {
         Self {
             render_sample_rate_hz: sample_rate_hz, // TODO: Maybe change interface instead? Seems a bit odd
             capture_sample_rate_hz: sample_rate_hz,
@@ -61,12 +62,12 @@ impl VoipAec3Builder {
         self
     }
 
-    pub fn capture_sample_rate_hz(mut self, sample_rate_hz: i32) -> Self {
+    pub fn capture_sample_rate_hz(mut self, sample_rate_hz: usize) -> Self {
         self.capture_sample_rate_hz = sample_rate_hz;
         self
     }
 
-    pub fn render_sample_rate_hz(mut self, sample_rate_hz: i32) -> Self {
+    pub fn render_sample_rate_hz(mut self, sample_rate_hz: usize) -> Self {
         self.render_sample_rate_hz = sample_rate_hz;
         self
     }
@@ -113,7 +114,7 @@ impl VoipAec3Builder {
 
         let mut aec3 = EchoCanceller3::new(
             chosen_config,
-            internal_sample_rate,
+            internal_sample_rate, // TODO: Update to usize throughout? Definitely at least u32
             self.render_channels,
             self.capture_channels,
         );
@@ -131,18 +132,18 @@ impl VoipAec3Builder {
         let render_frame_samples = render_stream_config.num_frames();
 
         let capture_buffer = AudioBuffer::from_sample_rates(
-            self.capture_sample_rate_hz as usize,
+            self.capture_sample_rate_hz,
             self.capture_channels,
             internal_sample_rate as usize,
             self.capture_channels,
-            self.capture_sample_rate_hz as usize,
+            self.capture_sample_rate_hz,
         );
         let render_buffer = AudioBuffer::from_sample_rates(
-            self.render_sample_rate_hz as usize,
+            self.render_sample_rate_hz,
             self.render_channels,
             internal_sample_rate as usize,
             self.render_channels,
-            self.render_sample_rate_hz as usize,
+            self.render_sample_rate_hz,
         );
 
         let capture_scratch = allocate_planar_storage(self.capture_channels, capture_frame_samples);
@@ -174,7 +175,7 @@ impl VoipAec3Builder {
         })
     }
 
-    fn valid_sample_rates(&self, capture_rate: i32, render_rate: i32) -> bool {
+    fn valid_sample_rates(&self, capture_rate: usize, render_rate: usize) -> bool {
         if (capture_rate < 16_000 || capture_rate > 48_000)
             || (render_rate < 16_000 || render_rate > 48_000)
         {
@@ -187,7 +188,7 @@ impl VoipAec3Builder {
 /// High-level wrapper that mirrors the WebRTC AEC3 reference usage pattern
 /// while exposing an ergonomic Rust API for VoIP pipelines.
 pub struct VoipAec3 {
-    sample_rate_hz: i32,
+    sample_rate_hz: usize,
     capture_frame_samples: usize,
     render_frame_samples: usize,
     render_channels: usize,
@@ -207,7 +208,7 @@ pub struct VoipAec3 {
 impl VoipAec3 {
     /// Convenience constructor mirroring [`VoipAec3Builder::new`].
     pub fn builder(
-        sample_rate_hz: i32,
+        sample_rate_hz: usize,
         render_channels: usize,
         capture_channels: usize,
     ) -> VoipAec3Builder {
@@ -225,7 +226,7 @@ impl VoipAec3 {
     }
 
     /// Returns the capture sample rate configured for the pipeline.
-    pub fn sample_rate_hz(&self) -> i32 {
+    pub fn sample_rate_hz(&self) -> usize {
         self.sample_rate_hz
     }
 
@@ -419,7 +420,7 @@ fn planar_to_interleaved(
 /// Error type produced by the VoIP wrapper.
 #[derive(Debug, Clone, PartialEq)]
 pub enum VoipAec3Error {
-    UnsupportedSampleRate { render: i32, capture: i32 },
+    UnsupportedSampleRate { render: usize, capture: usize },
     InvalidChannelCount { render: usize, capture: usize },
     CaptureFrameSize { expected: usize, actual: usize },
     RenderFrameSize { expected: usize, actual: usize },

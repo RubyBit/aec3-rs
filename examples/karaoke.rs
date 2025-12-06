@@ -47,7 +47,7 @@ fn processing_thread(
     // AudioBuffer used for conversion
     let mut audio_buf =
         AudioBuffer::from_sample_rates(sample_rate, channels, sample_rate, channels, sample_rate);
-    let stream_config = StreamConfig::new(sample_rate as i32, channels, false);
+    let stream_config = StreamConfig::new(sample_rate, channels, false);
 
     let mut last_metrics = std::time::Instant::now();
     let metrics_interval = std::time::Duration::from_secs(5);
