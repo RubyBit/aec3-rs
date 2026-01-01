@@ -31,6 +31,7 @@ pub struct Subtractor {
     shadow_gains: Vec<ShadowFilterUpdateGain>,
     filter_misadjustment_estimators: Vec<FilterMisadjustmentEstimator>,
     poor_shadow_filter_counters: Vec<usize>,
+    shadow_filter_reset_hangover: Vec<usize>,
     main_frequency_responses: Vec<Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>>,
     main_impulse_responses: Vec<Vec<f32>>,
 }
@@ -103,6 +104,7 @@ impl Subtractor {
             shadow_gains,
             filter_misadjustment_estimators,
             poor_shadow_filter_counters: vec![0; num_capture_channels],
+            shadow_filter_reset_hangover: vec![0; num_capture_channels],
             main_frequency_responses,
             main_impulse_responses,
         }
@@ -201,6 +203,14 @@ impl Subtractor {
                     &self.main_frequency_responses[ch],
                     &mut erl,
                 );
+
+                // Do not allow the behavior of the shadow filter to affect the
+                // adaptation of the main filter just after the shadow filter has
+                // been reset (copied from the main filter). This mirrors
+                // `coarse_filter_reset_hangover_` in the WebRTC reference.
+                let disallow_leakage_diverged = self.shadow_filter_reset_hangover[ch] > 0
+                    && self.config.filter.use_shadow_reset_hangover;
+
                 self.main_gains[ch].compute(
                     &x2_main,
                     render_signal_analyzer,
@@ -208,6 +218,7 @@ impl Subtractor {
                     &erl,
                     self.main_filters[ch].size_partitions(),
                     aec_state.saturated_capture(),
+                    disallow_leakage_diverged,
                     &mut g,
                 );
             }
@@ -247,6 +258,10 @@ impl Subtractor {
                     aec_state.saturated_capture(),
                     &mut g,
                 );
+
+                if self.shadow_filter_reset_hangover[ch] > 0 {
+                    self.shadow_filter_reset_hangover[ch] -= 1;
+                }
             } else {
                 self.poor_shadow_filter_counters[ch] = 0;
                 self.shadow_filters[ch].set_filter(
@@ -261,6 +276,9 @@ impl Subtractor {
                     aec_state.saturated_capture(),
                     &mut g,
                 );
+
+                self.shadow_filter_reset_hangover[ch] =
+                    self.config.filter.shadow_reset_hangover_blocks;
             }
 
             self.shadow_filters[ch].adapt(render_buffer, &g);

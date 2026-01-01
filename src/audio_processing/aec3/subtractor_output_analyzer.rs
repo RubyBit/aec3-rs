@@ -18,11 +18,13 @@ impl SubtractorOutputAnalyzer {
         &mut self,
         subtractor_output: &[SubtractorOutput],
         any_filter_converged: &mut bool,
+        any_coarse_filter_converged: &mut bool,
         all_filters_diverged: &mut bool,
     ) {
         assert_eq!(subtractor_output.len(), self.filters_converged.len());
 
         *any_filter_converged = false;
+        *any_coarse_filter_converged = false;
         *all_filters_diverged = true;
 
         for (ch, output) in subtractor_output.iter().enumerate() {
@@ -31,13 +33,17 @@ impl SubtractorOutputAnalyzer {
             let e2_shadow = output.e2_shadow;
 
             const CONVERGENCE_THRESHOLD: f32 = 50.0 * 50.0 * BLOCK_SIZE as f32;
+            const CONVERGENCE_THRESHOLD_LOW_LEVEL: f32 = 20.0 * 20.0 * BLOCK_SIZE as f32;
             let main_filter_converged = e2_main < 0.5 * y2 && y2 > CONVERGENCE_THRESHOLD;
             let shadow_filter_converged = e2_shadow < 0.05 * y2 && y2 > CONVERGENCE_THRESHOLD;
+            let shadow_filter_converged_relaxed =
+                e2_shadow < 0.3 * y2 && y2 > CONVERGENCE_THRESHOLD_LOW_LEVEL;
             let min_e2 = e2_main.min(e2_shadow);
             let diverged = min_e2 > 1.5 * y2 && y2 > 30.0 * 30.0 * BLOCK_SIZE as f32;
 
             self.filters_converged[ch] = main_filter_converged || shadow_filter_converged;
             *any_filter_converged |= self.filters_converged[ch];
+            *any_coarse_filter_converged |= shadow_filter_converged_relaxed;
             *all_filters_diverged &= diverged;
         }
     }

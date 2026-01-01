@@ -77,6 +77,7 @@ impl MainFilterUpdateGain {
         erl: &[f32; FFT_LENGTH_BY_2_PLUS_1],
         size_partitions: usize,
         saturated_capture_signal: bool,
+        disallow_leakage_diverged: bool,
         gain_fft: &mut FftData,
     ) {
         let e_main_fft = &subtractor_output.e_main_fft;
@@ -123,7 +124,7 @@ impl MainFilterUpdateGain {
         }
 
         for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
-            if e2_shadow[k] >= e2_main[k] {
+            if e2_shadow[k] >= e2_main[k] || disallow_leakage_diverged {
                 self.h_error[k] += self.current_config.leakage_converged * erl[k];
             } else {
                 self.h_error[k] += self.current_config.leakage_diverged * erl[k];
@@ -386,6 +387,7 @@ mod tests {
                 &erl,
                 main_filter.size_partitions(),
                 saturation,
+                false,
                 &mut g,
             );
             main_filter.adapt_with_impulse_response(&render_buffer_view, &g, &mut h[0]);

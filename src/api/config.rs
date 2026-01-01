@@ -15,6 +15,7 @@ pub struct EchoCanceller3Config {
     pub echo_audibility: EchoAudibility,
     pub render_levels: RenderLevels,
     pub echo_removal_control: EchoRemovalControl,
+    pub transparent_mode: TransparentModeConfig,
     pub echo_model: EchoModel,
     pub suppressor: Suppressor,
 }
@@ -30,6 +31,7 @@ impl Default for EchoCanceller3Config {
             echo_audibility: EchoAudibility::default(),
             render_levels: RenderLevels::default(),
             echo_removal_control: EchoRemovalControl::default(),
+            transparent_mode: TransparentModeConfig::default(),
             echo_model: EchoModel::default(),
             suppressor: Suppressor::default(),
         }
@@ -92,6 +94,9 @@ impl EchoCanceller3Config {
 
         res &= limit_usize(&mut c.filter.config_change_duration_blocks, 0, 100_000);
         res &= limit_f32(&mut c.filter.initial_state_seconds, 0.0, 100.0);
+
+        // Mirrors the reference `filter.coarse_reset_hangover_blocks`.
+        res &= limit_usize(&mut c.filter.shadow_reset_hangover_blocks, 0, 250_000);
 
         res &= limit_f32(&mut c.erle.min, 1.0, 100_000.0);
         res &= limit_f32(&mut c.erle.max_l, 1.0, 100_000.0);
@@ -398,6 +403,15 @@ pub struct Filter {
     pub shadow_initial: ShadowConfiguration,
     pub config_change_duration_blocks: usize,
     pub initial_state_seconds: f32,
+    /// Number of blocks for which the main filter adaptation ignores the fact
+    /// that the shadow filter was just reset (copied from the main filter).
+    ///
+    /// This mirrors `coarse_reset_hangover_blocks` in the WebRTC reference
+    /// implementation (where the "coarse" filter corresponds to our shadow
+    /// filter).
+    pub shadow_reset_hangover_blocks: usize,
+    /// Kill-switch for the hangover mechanism.
+    pub use_shadow_reset_hangover: bool,
     pub conservative_initial_phase: bool,
     pub enable_shadow_filter_output_usage: bool,
     pub use_linear_filter: bool,
@@ -435,6 +449,8 @@ impl Default for Filter {
             },
             config_change_duration_blocks: 250,
             initial_state_seconds: 2.5,
+            shadow_reset_hangover_blocks: 0,
+            use_shadow_reset_hangover: true,
             conservative_initial_phase: false,
             enable_shadow_filter_output_usage: true,
             use_linear_filter: true,
@@ -561,6 +577,28 @@ impl Default for EchoRemovalControl {
         Self {
             has_clock_drift: false,
             linear_and_stable_echo_path: false,
+        }
+    }
+}
+
+/// Controls the AEC3 "transparent mode" classifier.
+///
+/// In the WebRTC reference implementation, transparent mode selection is
+/// controlled by field trials. This crate does not currently expose field
+/// trials, so we provide explicit configuration knobs instead.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransparentModeConfig {
+    /// Global kill-switch for transparent mode.
+    pub enabled: bool,
+    /// Enables the Hidden Markov Model (HMM) classifier variant.
+    pub use_hmm: bool,
+}
+
+impl Default for TransparentModeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            use_hmm: false,
         }
     }
 }

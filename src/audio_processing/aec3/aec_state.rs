@@ -255,10 +255,12 @@ impl AecState {
         );
 
         let mut any_filter_converged = false;
+        let mut any_coarse_filter_converged = false;
         let mut all_filters_diverged = false;
         self.subtractor_output_analyzer.update(
             subtractor_output,
             &mut any_filter_converged,
+            &mut any_coarse_filter_converged,
             &mut all_filters_diverged,
         );
 
@@ -353,6 +355,7 @@ impl AecState {
             min_delay,
             any_filter_consistent,
             any_filter_converged,
+            any_coarse_filter_converged,
             all_filters_diverged,
             active_render,
             self.saturated_capture(),
@@ -478,6 +481,8 @@ impl EchoRemoverMetricsAecState for AecState {
     }
 }
 
+// TODO: Maybe refactor this into different files.. this one is getting big!
+
 struct InitialState {
     conservative_initial_phase: bool,
     initial_state_seconds: f32,
@@ -595,8 +600,171 @@ impl FilterDelay {
     }
 }
 
-struct TransparentMode {
-    bounded_erl: bool,
+enum TransparentMode {
+    Disabled,
+    Hmm(TransparentModeHmm),
+    Legacy(TransparentModeLegacy),
+}
+
+impl TransparentMode {
+    fn new(config: &EchoCanceller3Config) -> Self {
+        // Mirror `TransparentMode::Create` from WebRTC:
+        // - disabled when bounded ERL is used
+        // - disabled by a kill-switch (field trial in WebRTC; explicit config here)
+        if config.ep_strength.bounded_erl || !config.transparent_mode.enabled {
+            return Self::Disabled;
+        }
+
+        if config.transparent_mode.use_hmm {
+            Self::Hmm(TransparentModeHmm::new())
+        } else {
+            Self::Legacy(TransparentModeLegacy::new(config))
+        }
+    }
+
+    fn reset(&mut self) {
+        match self {
+            TransparentMode::Disabled => {}
+            TransparentMode::Hmm(hmm) => hmm.reset(),
+            TransparentMode::Legacy(legacy) => legacy.reset(),
+        }
+    }
+
+    fn active(&self) -> bool {
+        match self {
+            TransparentMode::Disabled => false,
+            TransparentMode::Hmm(hmm) => hmm.active(),
+            TransparentMode::Legacy(legacy) => legacy.active(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn update(
+        &mut self,
+        filter_delay_blocks: i32,
+        any_filter_consistent: bool,
+        any_filter_converged: bool,
+        any_coarse_filter_converged: bool,
+        all_filters_diverged: bool,
+        active_render: bool,
+        saturated_capture: bool,
+    ) {
+        match self {
+            TransparentMode::Disabled => {}
+            TransparentMode::Hmm(hmm) => hmm.update(
+                /* filter_delay_blocks */ filter_delay_blocks,
+                /* any_filter_consistent */ any_filter_consistent,
+                /* any_filter_converged */ any_filter_converged,
+                any_coarse_filter_converged,
+                /* all_filters_diverged */ all_filters_diverged,
+                active_render,
+                /* saturated_capture */ saturated_capture,
+            ),
+            TransparentMode::Legacy(legacy) => legacy.update(
+                filter_delay_blocks,
+                any_filter_consistent,
+                any_filter_converged,
+                /* any_coarse_filter_converged */ any_coarse_filter_converged,
+                all_filters_diverged,
+                active_render,
+                saturated_capture,
+            ),
+        }
+    }
+}
+
+struct TransparentModeHmm {
+    transparency_activated: bool,
+    prob_transparent_state: f32,
+}
+
+impl TransparentModeHmm {
+    const INITIAL_PROB_TRANSPARENT: f32 = 0.2;
+
+    fn new() -> Self {
+        let mut this = Self {
+            transparency_activated: false,
+            prob_transparent_state: Self::INITIAL_PROB_TRANSPARENT,
+        };
+        this.reset();
+        this
+    }
+
+    fn reset(&mut self) {
+        self.transparency_activated = false;
+        self.prob_transparent_state = Self::INITIAL_PROB_TRANSPARENT;
+    }
+
+    fn active(&self) -> bool {
+        self.transparency_activated
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn update(
+        &mut self,
+        _filter_delay_blocks: i32,
+        _any_filter_consistent: bool,
+        _any_filter_converged: bool,
+        any_coarse_filter_converged: bool,
+        _all_filters_diverged: bool,
+        active_render: bool,
+        _saturated_capture: bool,
+    ) {
+        // The HMM is only updated during active render.
+        if !active_render {
+            return;
+        }
+
+        // Probability of switching from one state to the other.
+        const SWITCH: f32 = 0.000001;
+
+        // Probability of observing converged coarse filters in states "normal"
+        // and "transparent" during active render.
+        const CONVERGED_NORMAL: f32 = 0.01;
+        const CONVERGED_TRANSPARENT: f32 = 0.001;
+
+        // Probability of transitioning to the transparent state from the normal
+        // and transparent state respectively.
+        const A0: f32 = SWITCH;
+        const A1: f32 = 1.0 - SWITCH;
+
+        // Observation probabilities (out = 0/1) in the normal and transparent
+        // states respectively.
+        const B00: f32 = 1.0 - CONVERGED_NORMAL;
+        const B01: f32 = CONVERGED_NORMAL;
+        const B10: f32 = 1.0 - CONVERGED_TRANSPARENT;
+        const B11: f32 = CONVERGED_TRANSPARENT;
+
+        let prob_transparent = self.prob_transparent_state;
+        let prob_normal = 1.0 - prob_transparent;
+
+        let prob_transition_transparent = prob_normal * A0 + prob_transparent * A1;
+        let prob_transition_normal = 1.0 - prob_transition_transparent;
+
+        let out = if any_coarse_filter_converged { 1 } else { 0 };
+        let (b_normal, b_transparent) = if out == 1 {
+            (B01, B11)
+        } else {
+            (B00, B10)
+        };
+
+        let prob_joint_normal = prob_transition_normal * b_normal;
+        let prob_joint_transparent = prob_transition_transparent * b_transparent;
+        let denom = prob_joint_normal + prob_joint_transparent;
+        debug_assert!(denom > 0.0);
+        self.prob_transparent_state = prob_joint_transparent / denom;
+
+        // Transparent mode is only activated when its probability is high.
+        // Dead zone between activation/deactivation thresholds.
+        if self.prob_transparent_state > 0.95 {
+            self.transparency_activated = true;
+        } else if self.prob_transparent_state < 0.5 {
+            self.transparency_activated = false;
+        }
+    }
+}
+
+struct TransparentModeLegacy {
     linear_and_stable_echo_path: bool,
     capture_block_counter: usize,
     transparency_activated: bool,
@@ -611,10 +779,9 @@ struct TransparentMode {
     strong_not_saturated_render_blocks: usize,
 }
 
-impl TransparentMode {
+impl TransparentModeLegacy {
     fn new(config: &EchoCanceller3Config) -> Self {
         Self {
-            bounded_erl: config.ep_strength.bounded_erl,
             linear_and_stable_echo_path: config.echo_removal_control.linear_and_stable_echo_path,
             capture_block_counter: 0,
             transparency_activated: false,
@@ -649,6 +816,7 @@ impl TransparentMode {
         filter_delay_blocks: i32,
         any_filter_consistent: bool,
         any_filter_converged: bool,
+        _any_coarse_filter_converged: bool,
         all_filters_diverged: bool,
         active_render: bool,
         saturated_capture: bool,
@@ -694,6 +862,7 @@ impl TransparentMode {
         } else {
             self.diverged_sequence_size += 1;
             if self.diverged_sequence_size >= 60 {
+                // TODO(peah): Change these lines to ensure proper triggering of usable filter. (straight from webrtc source!)
                 self.non_converged_sequence_size = BLOCKS_SINCE_CONVERGED_FILTER_INIT;
             }
         }
@@ -701,14 +870,11 @@ impl TransparentMode {
         if self.active_non_converged_sequence_size > 60 * NUM_BLOCKS_PER_SECOND {
             self.finite_erl_recently_detected = false;
         }
-
         if self.num_converged_blocks > 50 {
             self.finite_erl_recently_detected = true;
         }
 
-        if self.bounded_erl {
-            self.transparency_activated = false;
-        } else if self.finite_erl_recently_detected {
+        if self.finite_erl_recently_detected {
             self.transparency_activated = false;
         } else if sane_filter_recently_seen && self.recent_convergence_during_activity {
             self.transparency_activated = false;
@@ -1155,5 +1321,52 @@ mod tests {
                 &subtractor_output,
             );
         }
+    }
+
+    #[test]
+    fn hmm_transparent_mode_toggles_as_reference() {
+        let mut config = EchoCanceller3Config::default();
+        config.transparent_mode.enabled = true;
+        config.transparent_mode.use_hmm = true;
+        config.ep_strength.bounded_erl = false;
+
+        let mut mode = TransparentMode::new(&config);
+        assert!(!mode.active());
+
+        // With active render and no (relaxed) coarse convergence, probability of
+        // transparent mode should increase and eventually activate.
+        for _ in 0..1000 {
+            mode.update(
+                /* filter_delay_blocks */ 0,
+                /* any_filter_consistent */ false,
+                /* any_filter_converged */ false,
+                /* any_coarse_filter_converged */ false,
+                /* all_filters_diverged */ false,
+                /* active_render */ true,
+                /* saturated_capture */ false,
+            );
+        }
+        assert!(mode.active());
+
+        // A few converged-coarse observations should deactivate due to the
+        // hysteresis thresholds.
+        for _ in 0..10 {
+            mode.update(0, false, false, true, false, true, false);
+        }
+        assert!(!mode.active());
+    }
+
+    #[test]
+    fn transparent_mode_kill_switch_disables_classifier() {
+        let mut config = EchoCanceller3Config::default();
+        config.transparent_mode.enabled = false;
+        config.transparent_mode.use_hmm = true;
+        config.ep_strength.bounded_erl = false;
+
+        let mut mode = TransparentMode::new(&config);
+        for _ in 0..2000 {
+            mode.update(0, false, false, false, false, true, false);
+        }
+        assert!(!mode.active());
     }
 }
