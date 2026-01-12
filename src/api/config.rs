@@ -598,7 +598,7 @@ impl Default for TransparentModeConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            use_hmm: false,
+            use_hmm: false, // TODO: Maybe switch to true later? Need to do more testing
         }
     }
 }
