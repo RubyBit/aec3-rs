@@ -183,7 +183,7 @@ Feature status / roadmap
 | Multi-band split/merge filterbanks + FFT analysis | ✅ | part of the AEC3 pipeline |
 | Optional capture high-pass filter | ✅ | enabled by default |
 | Metrics (ERL / ERLE / estimated delay) | ✅ | available via `metrics()` / return value |
-| Diagnostics dumping hooks | 🚧 | present, but currently stubbed / minimal |
+| Diagnostics dumping | ✅ | available through the optional `diagnostics` feature |
 | Expose “linear output” helpers in wrapper | 🚧 | core supports it; wrapper may expose later |
 | Noise suppression (standalone NS) | Planned | out of scope today; may be added later |
 | Automatic gain control (AGC) | Planned | out of scope today; may be added later |
