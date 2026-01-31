@@ -1,7 +1,7 @@
 use crate::api::config::DelaySelectionThresholds;
 use crate::audio_processing::aec3::delay_estimate::{DelayEstimate, DelayEstimateQuality};
 use crate::audio_processing::aec3::matched_filter::LagEstimate;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 const HISTOGRAM_DATA_SIZE: usize = 250;
 
@@ -50,11 +50,15 @@ impl MatchedFilterLagAggregator {
         }
 
         self.data_dumper.dump_raw_i32(
+            DiagnosticLevel::Production,
             "aec3_echo_path_delay_estimator_best_index",
             best_lag_index.map(|i| i as i32).unwrap_or(-1),
         );
-        self.data_dumper
-            .dump_raw_i32_slice("aec3_echo_path_delay_estimator_histogram", &self.histogram);
+        self.data_dumper.dump_raw_i32_slice(
+            DiagnosticLevel::DeepDebug,
+            "aec3_echo_path_delay_estimator_histogram",
+            &self.histogram,
+        );
 
         let best_idx = match best_lag_index {
             Some(idx) => idx,

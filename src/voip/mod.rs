@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::api::{
     config::EchoCanceller3Config,
@@ -9,6 +10,7 @@ use crate::audio_processing::aec3::{
 };
 use crate::audio_processing::audio_buffer::AudioBuffer;
 use crate::audio_processing::high_pass_filter::HighPassFilter;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 use crate::audio_processing::stream_config::StreamConfig;
 
 /// Convenient result type used by the VoIP wrapper.
@@ -25,6 +27,9 @@ pub struct VoipAec3Builder {
     enable_high_pass: bool,
     config: Option<EchoCanceller3Config>,
     initial_delay_ms: Option<i32>,
+    diagnostics_enabled: bool,
+    diagnostics_output_dir: Option<PathBuf>,
+    diagnostics_level: Option<DiagnosticLevel>,
 }
 
 impl VoipAec3Builder {
@@ -41,6 +46,9 @@ impl VoipAec3Builder {
             enable_high_pass: true,
             config: None,
             initial_delay_ms: None,
+            diagnostics_enabled: false,
+            diagnostics_output_dir: None,
+            diagnostics_level: None,
         }
     }
 
@@ -59,6 +67,30 @@ impl VoipAec3Builder {
     /// Sets an optional initial buffer delay hint (in milliseconds).
     pub fn initial_delay_ms(mut self, delay_ms: i32) -> Self {
         self.initial_delay_ms = Some(delay_ms);
+        self
+    }
+
+    /// Enables or disables AEC3 diagnostic dumping (log + WAV files).
+    ///
+    /// This is a no-op unless the crate is built with the `diagnostics` feature.
+    pub fn enable_diagnostics(mut self, enable: bool) -> Self {
+        self.diagnostics_enabled = enable;
+        self
+    }
+
+    /// Sets the output directory for diagnostic artifacts.
+    ///
+    /// This is a no-op unless the crate is built with the `diagnostics` feature.
+    pub fn diagnostics_output_directory<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.diagnostics_output_dir = Some(path.into());
+        self
+    }
+
+    /// Sets the diagnostic verbosity level.
+    ///
+    /// This is a no-op unless the crate is built with the `diagnostics` feature.
+    pub fn diagnostics_level(mut self, level: DiagnosticLevel) -> Self {
+        self.diagnostics_level = Some(level);
         self
     }
 
@@ -91,6 +123,16 @@ impl VoipAec3Builder {
         let chosen_config = self.config.unwrap_or_else(|| {
             EchoCanceller3::create_default_config(self.render_channels, self.capture_channels)
         });
+
+        if self.diagnostics_enabled {
+            if let Some(dir) = &self.diagnostics_output_dir {
+                EchoCanceller3::set_diagnostics_output_directory(dir);
+            }
+            if let Some(level) = self.diagnostics_level {
+                EchoCanceller3::set_diagnostics_level(level);
+            }
+            EchoCanceller3::set_diagnostics_enabled(true);
+        }
         // Use an internal full-band rate for the AEC core. For 44.1 kHz input
         // we run the internal AEC at 48 kHz to match the library's multi-band
         // expectations while keeping the external stream configuration at
@@ -118,6 +160,11 @@ impl VoipAec3Builder {
             self.render_channels,
             self.capture_channels,
         );
+
+        if self.diagnostics_enabled {
+            // Make it convenient to separate per-build captures in the same log.
+            aec3.initiate_new_set_of_recordings();
+        }
 
         if let Some(delay) = self.initial_delay_ms {
             aec3.set_audio_buffer_delay(delay);
@@ -238,6 +285,32 @@ impl VoipAec3 {
     /// Updates the audio buffer delay hint at runtime.
     pub fn set_audio_buffer_delay(&mut self, delay_ms: i32) {
         self.aec3.set_audio_buffer_delay(delay_ms);
+    }
+
+    /// Enables or disables diagnostic dumping globally.
+    ///
+    /// This is a no-op unless the crate is built with the `diagnostics` feature.
+    pub fn set_diagnostics_enabled(enabled: bool) {
+        ApmDataDumper::set_activated(enabled);
+    }
+
+    /// Sets the global diagnostics verbosity level.
+    ///
+    /// This is a no-op unless the crate is built with the `diagnostics` feature.
+    pub fn set_diagnostics_level(level: DiagnosticLevel) {
+        ApmDataDumper::set_diagnostics_level(level);
+    }
+
+    /// Sets the global diagnostics output directory.
+    ///
+    /// This is a no-op unless the crate is built with the `diagnostics` feature.
+    pub fn set_diagnostics_output_directory<P: AsRef<std::path::Path>>(path: P) {
+        ApmDataDumper::set_output_directory(path);
+    }
+
+    /// Starts a new logical recording set in the diagnostics log.
+    pub fn initiate_new_set_of_recordings(&self) {
+        self.aec3.initiate_new_set_of_recordings();
     }
 
     /// Feeds a render (far-end) frame into the pipeline.

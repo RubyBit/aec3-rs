@@ -15,7 +15,7 @@ use crate::audio_processing::aec3::block_processor::BlockProcessor;
 use crate::audio_processing::aec3::frame_blocker::FrameBlocker;
 use crate::audio_processing::audio_buffer::AudioBuffer;
 use crate::audio_processing::high_pass_filter::HighPassFilter;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 const LINEAR_OUTPUT_BANDS: usize = 1;
 const SUB_FRAMES_PER_FRAME: usize = AudioBuffer::SPLIT_BAND_SIZE / SUB_FRAME_LENGTH;
@@ -129,6 +129,7 @@ impl RenderWriter {
         assert_eq!(AudioBuffer::SPLIT_BAND_SIZE, input.num_frames_per_band());
 
         self.data_dumper.dump_wav(
+            DiagnosticLevel::Developer,
             "aec3_render_input",
             AudioBuffer::SPLIT_BAND_SIZE,
             input.split_band(0, 0),
@@ -266,6 +267,34 @@ impl EchoCanceller3 {
             .update_echo_leakage_status(leakage_detected);
     }
 
+    /// Enables or disables diagnostic dumping globally.
+    ///
+    /// When the `diagnostics` feature is disabled, this is a no-op.
+    pub fn set_diagnostics_enabled(enabled: bool) {
+        ApmDataDumper::set_activated(enabled);
+    }
+
+    /// Sets the global diagnostics output directory.
+    ///
+    /// When the `diagnostics` feature is disabled, this is a no-op.
+    pub fn set_diagnostics_output_directory<P: AsRef<std::path::Path>>(path: P) {
+        ApmDataDumper::set_output_directory(path);
+    }
+
+    /// Sets the global diagnostics verbosity level.
+    ///
+    /// When the `diagnostics` feature is disabled, this is a no-op.
+    pub fn set_diagnostics_level(level: DiagnosticLevel) {
+        ApmDataDumper::set_diagnostics_level(level);
+    }
+
+    /// Starts a new logical recording set.
+    ///
+    /// This can be useful to separate multiple runs inside the same log.
+    pub fn initiate_new_set_of_recordings(&self) {
+        self.data_dumper.initiate_new_set_of_recordings();
+    }
+
     pub fn create_default_config(
         num_render_channels: usize,
         num_capture_channels: usize,
@@ -289,14 +318,18 @@ impl EchoCanceller3 {
         assert_eq!(self.num_bands, render.num_bands());
         assert_eq!(AudioBuffer::SPLIT_BAND_SIZE, render.num_frames_per_band());
 
-        self.data_dumper
-            .dump_raw_usize("aec3_call_order", EchoCanceller3ApiCall::Render as usize);
+        self.data_dumper.dump_raw_usize(
+            DiagnosticLevel::DeepDebug,
+            "aec3_call_order",
+            EchoCanceller3ApiCall::Render as usize,
+        );
         self.render_writer
             .insert(render, &mut self.render_transfer_queue);
     }
 
     fn analyze_capture_internal(&mut self, capture: &AudioBuffer) {
         self.data_dumper.dump_wav(
+            DiagnosticLevel::Developer,
             "aec3_capture_analyze_input",
             capture.num_frames(),
             capture.channel(0),
@@ -335,8 +368,11 @@ impl EchoCanceller3 {
             );
         }
 
-        self.data_dumper
-            .dump_raw_usize("aec3_call_order", EchoCanceller3ApiCall::Capture as usize);
+        self.data_dumper.dump_raw_usize(
+            DiagnosticLevel::DeepDebug,
+            "aec3_call_order",
+            EchoCanceller3ApiCall::Capture as usize,
+        );
 
         self.api_call_metrics.report_capture_call();
 
@@ -345,6 +381,7 @@ impl EchoCanceller3 {
         }
 
         self.data_dumper.dump_wav(
+            DiagnosticLevel::Developer,
             "aec3_capture_input",
             AudioBuffer::SPLIT_BAND_SIZE,
             capture.split_band(0, 0),
@@ -369,6 +406,7 @@ impl EchoCanceller3 {
         self.process_remaining_capture_frame_content(level_change, saturated);
 
         self.data_dumper.dump_wav(
+            DiagnosticLevel::Developer,
             "aec3_capture_output",
             AudioBuffer::SPLIT_BAND_SIZE,
             capture.split_band(0, 0),
@@ -496,7 +534,21 @@ impl EchoControl for EchoCanceller3 {
     }
 
     fn metrics(&self) -> Metrics {
-        self.block_processor.metrics()
+        let mut metrics = self.block_processor.metrics();
+
+        // ApiCallJitterMetrics::Jitter uses i32::MAX for the uninitialized min.
+        // Surface a stable, user-friendly value instead. Prob should do that..
+        let render_min = self.api_call_metrics.render_jitter().min();
+        let capture_min = self.api_call_metrics.capture_jitter().min();
+
+        metrics.render_jitter_min = (render_min != i32::MAX).then_some(render_min).unwrap_or(0);
+        metrics.render_jitter_max = self.api_call_metrics.render_jitter().max();
+        metrics.capture_jitter_min = (capture_min != i32::MAX)
+            .then_some(capture_min)
+            .unwrap_or(0);
+        metrics.capture_jitter_max = self.api_call_metrics.capture_jitter().max();
+
+        metrics
     }
 
     fn set_audio_buffer_delay(&mut self, delay_ms: i32) {

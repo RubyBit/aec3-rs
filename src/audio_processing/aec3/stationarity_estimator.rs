@@ -1,4 +1,4 @@
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 use super::aec3_common::{FFT_LENGTH_BY_2_PLUS_1, NUM_BLOCKS_PER_SECOND};
 use super::spectrum_buffer::SpectrumBuffer;
@@ -41,8 +41,13 @@ impl StationarityEstimator {
         }
         self.noise.update(spectrum);
         self.data_dumper
-            .dump_raw_f32_slice("aec3_stationarity_noise_spectrum", self.noise.spectrum());
+            .dump_raw_f32_slice(
+                DiagnosticLevel::DeepDebug,
+                "aec3_stationarity_noise_spectrum",
+                self.noise.spectrum(),
+            );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_stationarity_is_block_stationary",
             if self.is_block_stationary() { 1.0 } else { 0.0 },
         );
@@ -112,7 +117,7 @@ impl StationarityEstimator {
         assert!(noise > 0.0);
         let ratio = accumulated_power / noise;
         self.data_dumper
-            .dump_raw_f32("aec3_stationarity_long_ratio", ratio);
+            .dump_raw_f32(DiagnosticLevel::Developer, "aec3_stationarity_long_ratio", ratio);
         accumulated_power < STATIONARITY_THRESHOLD * noise
     }
 

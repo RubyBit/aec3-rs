@@ -16,7 +16,7 @@ use crate::audio_processing::aec3::render_buffer::RenderBuffer;
 use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
 use crate::audio_processing::aec3::shadow_filter_update_gain::ShadowFilterUpdateGain;
 use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 /// Provides the linear echo subtraction functionality for the AEC3 pipeline.
 pub struct Subtractor {
@@ -238,9 +238,9 @@ impl Subtractor {
 
             if ch == 0 {
                 self.data_dumper
-                    .dump_raw_f32_slice("aec3_subtractor_G_main", &g.re);
+                    .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_subtractor_G_main", &g.re);
                 self.data_dumper
-                    .dump_raw_f32_slice("aec3_subtractor_G_main", &g.im);
+                    .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_subtractor_G_main", &g.im);
             }
 
             if output.e2_main < output.e2_shadow {
@@ -285,9 +285,17 @@ impl Subtractor {
 
             if ch == 0 {
                 self.data_dumper
-                    .dump_raw_f32_slice("aec3_subtractor_G_shadow", &g.re);
+                    .dump_raw_f32_slice(
+                        DiagnosticLevel::DeepDebug,
+                        "aec3_subtractor_G_shadow",
+                        &g.re,
+                    );
                 self.data_dumper
-                    .dump_raw_f32_slice("aec3_subtractor_G_shadow", &g.im);
+                    .dump_raw_f32_slice(
+                        DiagnosticLevel::DeepDebug,
+                        "aec3_subtractor_G_shadow",
+                        &g.im,
+                    );
                 self.filter_misadjustment_estimators[ch].dump(&self.data_dumper);
                 self.dump_filters();
             }
@@ -297,6 +305,7 @@ impl Subtractor {
             }
 
             self.data_dumper.dump_wav(
+                DiagnosticLevel::Developer,
                 "aec3_main_filters_output",
                 BLOCK_SIZE,
                 &output.e_main,
@@ -304,6 +313,7 @@ impl Subtractor {
                 1,
             );
             self.data_dumper.dump_wav(
+                DiagnosticLevel::Developer,
                 "aec3_shadow_filter_output",
                 BLOCK_SIZE,
                 &output.e_shadow,
@@ -363,7 +373,7 @@ impl Subtractor {
         }
         if let Some(response) = self.main_impulse_responses.first() {
             self.data_dumper
-                .dump_raw_f32_slice("aec3_subtractor_h_main", response);
+                .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_subtractor_h_main", response);
         }
         let filters = self.main_filters[0].get_filter();
         for partition in filters {
@@ -371,9 +381,17 @@ impl Subtractor {
                 continue;
             }
             self.data_dumper
-                .dump_raw_f32_slice("aec3_subtractor_H_main", &partition[0].re);
+                .dump_raw_f32_slice(
+                    DiagnosticLevel::DeepDebug,
+                    "aec3_subtractor_H_main",
+                    &partition[0].re,
+                );
             self.data_dumper
-                .dump_raw_f32_slice("aec3_subtractor_H_main", &partition[0].im);
+                .dump_raw_f32_slice(
+                    DiagnosticLevel::DeepDebug,
+                    "aec3_subtractor_H_main",
+                    &partition[0].im,
+                );
         }
     }
 }
@@ -479,7 +497,11 @@ impl FilterMisadjustmentEstimator {
     }
 
     fn dump(&self, data_dumper: &ApmDataDumper) {
-        data_dumper.dump_raw_f32("aec3_inv_misadjustment_factor", self.inv_misadjustment);
+        data_dumper.dump_raw_f32(
+            DiagnosticLevel::Developer,
+            "aec3_inv_misadjustment_factor",
+            self.inv_misadjustment,
+        );
     }
 }
 

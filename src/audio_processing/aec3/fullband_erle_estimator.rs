@@ -1,6 +1,6 @@
 use crate::api::config::Erle as ErleConfig;
 use crate::audio_processing::aec3::aec3_common::fast_approx_log2f;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 use super::aec3_common::FFT_LENGTH_BY_2_PLUS_1;
 
@@ -102,7 +102,11 @@ impl FullBandErleEstimator {
     }
 
     pub fn dump(&self, dumper: &ApmDataDumper) {
-        dumper.dump_raw_f32("aec3_fullband_erle_log2", self.fullband_erle_log2());
+        dumper.dump_raw_f32(
+            DiagnosticLevel::Developer,
+            "aec3_fullband_erle_log2",
+            self.fullband_erle_log2(),
+        );
         if let Some(inst) = self.instantaneous_erle.first() {
             inst.dump(dumper);
         }
@@ -204,15 +208,25 @@ impl ErleInstantaneous {
 
     fn dump(&self, dumper: &ApmDataDumper) {
         dumper.dump_raw_f32(
+            DiagnosticLevel::Developer,
             "aec3_fullband_erle_inst_log2",
             self.erle_log2.unwrap_or(-10.0),
         );
         dumper.dump_raw_f32(
+            DiagnosticLevel::Developer,
             "aec3_erle_instantaneous_quality",
             self.quality_estimate().unwrap_or(0.0),
         );
-        dumper.dump_raw_f32("aec3_fullband_erle_max_log2", self.max_erle_log2);
-        dumper.dump_raw_f32("aec3_fullband_erle_min_log2", self.min_erle_log2);
+        dumper.dump_raw_f32(
+            DiagnosticLevel::Developer,
+            "aec3_fullband_erle_max_log2",
+            self.max_erle_log2,
+        );
+        dumper.dump_raw_f32(
+            DiagnosticLevel::Developer,
+            "aec3_fullband_erle_min_log2",
+            self.min_erle_log2,
+        );
     }
 
     fn update_max_min(&mut self) {

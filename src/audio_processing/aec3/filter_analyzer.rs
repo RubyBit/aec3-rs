@@ -1,7 +1,7 @@
 use std::cmp::{max, min};
 
 use crate::api::config::EchoCanceller3Config;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 use super::aec3_common::{
     BLOCK_SIZE, BLOCK_SIZE_LOG2, FFT_LENGTH_BY_2, NUM_BLOCKS_PER_SECOND, get_time_domain_length,
@@ -120,7 +120,11 @@ impl FilterAnalyzer {
     fn analyze_region(&mut self, filters_time_domain: &[Vec<f32>], render_buffer: &RenderBuffer) {
         self.pre_process_filters(filters_time_domain);
         self.data_dumper
-            .dump_raw_f32_slice("aec3_linear_filter_processed_td", &self.h_highpass[0]);
+            .dump_raw_f32_slice(
+                DiagnosticLevel::DeepDebug,
+                "aec3_linear_filter_processed_td",
+                &self.h_highpass[0],
+            );
 
         for (ch, ((state, h_hp), filter)) in self
             .filter_analysis_states

@@ -18,10 +18,22 @@ fn processing_thread(
     sample_rate: usize,
     channels: usize,
 ) {
-    let mut pipeline = VoipAec3::builder(sample_rate, channels, channels)
-        .initial_delay_ms(0)
-        .build()
-        .expect("failed to create AEC pipeline");
+    let builder = VoipAec3::builder(sample_rate, channels, channels).initial_delay_ms(0);
+
+    // Enables debug dumping (WAL + WAV files) when the crate is built with
+    // `--features diagnostics`.
+    let builder = {
+        #[cfg(feature = "diagnostics")]
+        {
+            builder.enable_diagnostics(true)
+        }
+        #[cfg(not(feature = "diagnostics"))]
+        {
+            builder
+        }
+    };
+
+    let mut pipeline = builder.build().expect("failed to create AEC pipeline");
 
     let mut last_metrics = Instant::now();
     let metrics_interval = Duration::from_secs(5);
@@ -168,6 +180,11 @@ fn main() -> Result<()> {
     output_stream.play()?;
 
     println!("Running delayed karaoke loopback — press Ctrl+C to exit (capture delay ≈ 20ms)");
+    #[cfg(feature = "diagnostics")]
+    {
+        println!("Diagnostics enabled (feature=diagnostics): writing WAL + WAV files to ./aec3_diagnostics");
+        println!("Inspect WAL: cargo run --features diagnostics --bin parse-diagnostics");
+    }
 
     loop {
         thread::sleep(Duration::from_millis(100));

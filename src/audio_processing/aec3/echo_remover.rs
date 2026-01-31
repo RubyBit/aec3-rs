@@ -149,6 +149,10 @@ impl EchoRemover {
                 self.aec_state.fullband_erle_log2(),
             )),
             delay_ms: 0,
+            render_jitter_min: 0,
+            render_jitter_max: 0,
+            capture_jitter_min: 0,
+            capture_jitter_max: 0,
         }
     }
 

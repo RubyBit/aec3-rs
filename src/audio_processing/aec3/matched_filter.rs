@@ -1,6 +1,6 @@
 use crate::audio_processing::aec3::aec3_common::{Aec3Optimization, BLOCK_SIZE};
 use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 use std::cmp::Ordering;
 
 const SATURATION_LIMIT: f32 = 32_000.0;
@@ -137,7 +137,11 @@ impl MatchedFilter {
             );
 
             self.data_dumper
-                .dump_raw_f32_slice(&format!("aec3_correlator_{}_h", index), filter);
+                .dump_raw_f32_slice(
+                    DiagnosticLevel::DeepDebug,
+                    &format!("aec3_correlator_{}_h", index),
+                    filter,
+                );
 
             alignment_shift += self.filter_intra_lag_shift;
         }

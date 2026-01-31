@@ -10,7 +10,7 @@ use crate::audio_processing::aec3::delay_estimate::{DelayEstimate, DelayEstimate
 use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
 use crate::audio_processing::aec3::matched_filter::MatchedFilter;
 use crate::audio_processing::aec3::matched_filter_lag_aggregator::MatchedFilterLagAggregator;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 /// Estimates the render/capture delay by correlating the decimated capture signal
 /// with the downsampled render buffer produced by the render delay buffer.
@@ -98,6 +98,7 @@ impl EchoPathDelayEstimator {
         self.capture_decimator
             .decimate(&downmixed_capture, downsampled_capture);
         self.data_dumper.dump_wav(
+            DiagnosticLevel::Developer,
             "aec3_capture_decimator_output",
             downsampled_capture.len(),
             downsampled_capture,
@@ -122,7 +123,7 @@ impl EchoPathDelayEstimator {
             .map(|estimate| (estimate.delay * self.down_sampling_factor) as i32)
             .unwrap_or(-1);
         self.data_dumper
-            .dump_raw_i32("aec3_echo_path_delay_estimator_delay", dumped_delay);
+            .dump_raw_i32(DiagnosticLevel::Production, "aec3_echo_path_delay_estimator_delay", dumped_delay);
 
         if let Some(estimate) = aggregated.as_mut() {
             estimate.delay *= self.down_sampling_factor;

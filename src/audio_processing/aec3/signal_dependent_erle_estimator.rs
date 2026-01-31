@@ -3,7 +3,7 @@ use crate::audio_processing::aec3::aec3_common::{
     BLOCK_SIZE, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1,
 };
 use crate::audio_processing::aec3::render_buffer::RenderBuffer;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 const SUBBANDS: usize = 6;
 const BAND_BOUNDARIES: [usize; SUBBANDS + 1] = [1, 8, 16, 24, 32, 48, FFT_LENGTH_BY_2_PLUS_1];
@@ -222,15 +222,19 @@ impl SignalDependentErleEstimator {
     pub fn dump(&self, dumper: &ApmDataDumper) {
         if let Some(channel_estimators) = self.erle_estimators.first() {
             for estimator in channel_estimators {
-                dumper.dump_raw_f32_slice("aec3_all_erle", estimator);
+                dumper.dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_all_erle", estimator);
             }
         }
         if let Some(erle_ref) = self.erle_ref.first() {
-            dumper.dump_raw_f32_slice("aec3_ref_erle", erle_ref);
+            dumper.dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_ref_erle", erle_ref);
         }
         if let Some(factors) = self.correction_factors.first() {
             for factor in factors {
-                dumper.dump_raw_f32_slice("aec3_erle_correction_factor", factor);
+                dumper.dump_raw_f32_slice(
+                    DiagnosticLevel::DeepDebug,
+                    "aec3_erle_correction_factor",
+                    factor,
+                );
             }
         }
     }

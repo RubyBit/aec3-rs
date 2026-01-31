@@ -11,7 +11,7 @@ use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderB
 use crate::audio_processing::aec3::fft_buffer::FftBuffer;
 use crate::audio_processing::aec3::render_buffer::RenderBuffer;
 use crate::audio_processing::aec3::spectrum_buffer::SpectrumBuffer;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BufferingEvent {
@@ -326,6 +326,7 @@ impl RenderDelayBuffer {
         self.render_decimator
             .decimate(&downmixed, &mut self.render_ds);
         self.data_dumper.dump_wav(
+            DiagnosticLevel::Developer,
             "aec3_render_decimator_output",
             self.render_ds.len(),
             &self.render_ds,
@@ -376,10 +377,15 @@ impl RenderDelayBuffer {
             self.excess_render_detection_counter = 0;
         }
         self.data_dumper
-            .dump_raw_f32("aec3_latency_blocks", latency_blocks as f32);
+            .dump_raw_f32(DiagnosticLevel::Production, "aec3_latency_blocks", latency_blocks as f32);
         self.data_dumper
-            .dump_raw_f32("aec3_min_latency_blocks", self.min_latency_blocks as f32);
+            .dump_raw_f32(
+                DiagnosticLevel::Production,
+                "aec3_min_latency_blocks",
+                self.min_latency_blocks as f32,
+            );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_excess_render_detected",
             if excess_detected { 1.0 } else { 0.0 },
         );

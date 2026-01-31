@@ -7,7 +7,7 @@ use crate::audio_processing::aec3::delay_estimate::{DelayEstimate, DelayEstimate
 use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
 use crate::audio_processing::aec3::echo_path_delay_estimator::EchoPathDelayEstimator;
 use crate::audio_processing::aec3::render_delay_controller_metrics::RenderDelayControllerMetrics;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 /// Aligns the render buffer content with the capture signal by selecting a delay that
 /// accounts for buffer headroom and hysteresis.
@@ -135,10 +135,12 @@ impl RenderDelayController {
         );
 
         self.data_dumper.dump_raw_usize(
+            DiagnosticLevel::Production,
             "aec3_render_delay_controller_delay",
             delay_samples_value.unwrap_or(0),
         );
         self.data_dumper.dump_raw_usize(
+            DiagnosticLevel::Production,
             "aec3_render_delay_controller_buffer_delay",
             buffer_delay_blocks,
         );

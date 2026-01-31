@@ -14,7 +14,7 @@ use crate::audio_processing::aec3::reverb_model::ReverbModel;
 use crate::audio_processing::aec3::reverb_model_estimator::ReverbModelEstimator;
 use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
 use crate::audio_processing::aec3::subtractor_output_analyzer::SubtractorOutputAnalyzer;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 mod avg_render_reverb;
 mod filter_delay;
@@ -349,12 +349,17 @@ impl AecState {
 
         self.erle_estimator.dump(&self.data_dumper);
         self.reverb_model_estimator.dump(&self.data_dumper);
-        self.data_dumper.dump_raw_f32_slice("aec3_erl", self.erl());
         self.data_dumper
-            .dump_raw_f32("aec3_erl_time_domain", self.erl_time_domain());
-        self.data_dumper
-            .dump_raw_f32_slice("aec3_erle", &self.erle()[0]);
+            .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_erl", self.erl());
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Developer,
+            "aec3_erl_time_domain",
+            self.erl_time_domain(),
+        );
+        self.data_dumper
+            .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_erle", &self.erle()[0]);
+        self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_usable_linear_estimate",
             if self.usable_linear_estimate() {
                 1.0
@@ -363,18 +368,22 @@ impl AecState {
             },
         );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_transparent_mode",
             if self.transparent_mode() { 1.0 } else { 0.0 },
         );
         self.data_dumper.dump_raw_i32(
+            DiagnosticLevel::Production,
             "aec3_filter_delay",
             self.filter_analyzer.min_filter_delay_blocks(),
         );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_any_filter_consistent",
             if any_filter_consistent { 1.0 } else { 0.0 },
         );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_initial_state",
             if self.initial_state.initial_state_active() {
                 1.0
@@ -383,26 +392,32 @@ impl AecState {
             },
         );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_capture_saturation",
             if self.saturated_capture() { 1.0 } else { 0.0 },
         );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_echo_saturation",
             if self.saturated_echo() { 1.0 } else { 0.0 },
         );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_any_filter_converged",
             if any_filter_converged { 1.0 } else { 0.0 },
         );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_all_filters_diverged",
             if all_filters_diverged { 1.0 } else { 0.0 },
         );
         self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
             "aec3_external_delay_avaliable",
             if external_delay.is_some() { 1.0 } else { 0.0 },
         );
         self.data_dumper.dump_raw_f32_slice(
+            DiagnosticLevel::DeepDebug,
             "aec3_filter_tail_freq_resp_est",
             self.get_reverb_frequency_response(),
         );

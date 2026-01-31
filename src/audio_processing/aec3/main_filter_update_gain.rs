@@ -4,7 +4,7 @@ use crate::audio_processing::aec3::echo_path_variability::{DelayAdjustment, Echo
 use crate::audio_processing::aec3::fft_data::FftData;
 use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
 use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
-use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 
 const H_ERROR_INITIAL: f32 = 10_000.0;
 const POOR_EXCITATION_COUNTER_INITIAL: usize = 1000;
@@ -134,7 +134,7 @@ impl MainFilterUpdateGain {
         }
 
         self.data_dumper
-            .dump_raw_f32_slice("aec3_main_gain_H_error", &self.h_error);
+            .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_main_gain_H_error", &self.h_error);
     }
 
     fn update_current_config(&mut self) {
