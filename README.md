@@ -3,16 +3,17 @@
 aec3 — Rust port of WebRTC AEC3
 ================================
 
-A small, pragmatic Rust port of WebRTC's **AEC3 acoustic echo canceller**.
+A small, pragmatic Rust port of WebRTC's **AEC3 acoustic echo canceller**, including some of the
+other audio processing goodies (high-pass filter, noise suppression).
 
-This crate is for **real-time echo cancellation** in VoIP-style pipelines: it
+This crate is mainly for **real-time echo cancellation** in VoIP-style pipelines: it
 uses far-end audio (the "render" / speaker signal) as a reference and removes
-its echo from the near-end microphone capture.
+its echo from the near-end microphone capture. 
 
 It exposes:
 - the full low-level AEC3 implementation in `crate::audio_processing::aec3`, and
 - an ergonomic VoIP wrapper `crate::voip::VoipAec3` for typical "render + capture"
-  streaming.
+  streaming. This also provides the other audio processing features like an optional high-pass filter and noise suppression (and soon automatic gain control as well).
 
 At a glance
 -----------
@@ -30,6 +31,7 @@ Key features
 - **Delay estimation + alignment** between render and capture.
 - **Multi-band processing** (split/merge filter banks) + FFT-based analysis.
 - Optional **capture high-pass filter** (enabled by default).
+- Optional **noise suppression** (standalone NS in `crate::audio_processing::ns` and integrated in the wrapper).
 - Built-in **echo suppression** / residual echo control and comfort-noise logic
   (as part of the AEC3 pipeline).
 - Small, dependency-light API intended for embedding in real-time apps.
@@ -63,7 +65,7 @@ use aec3::voip::VoipAec3;
 
 let mut pipeline = VoipAec3::builder(48_000, 2, 2)
     .initial_delay_ms(116)
-    .enable_high_pass(true)
+    .enable_high_pass(true) // .enable_noise_suppression(true) — if you want to enable NS as well
     .build()
     .expect("failed to create pipeline");
 
@@ -184,9 +186,9 @@ Feature status / roadmap
 | Optional capture high-pass filter | ✅ | enabled by default |
 | Metrics (ERL / ERLE / estimated delay) | ✅ | available via `metrics()` / return value |
 | Diagnostics dumping | ✅ | available through the optional `diagnostics` feature |
-| Expose “linear output” helpers in wrapper | 🚧 | core supports it; wrapper may expose later |
-| Noise suppression (standalone NS) | Planned | out of scope today; may be added later |
-| Automatic gain control (AGC) | Planned | out of scope today; may be added later |
+| Optional linear AEC output path in wrapper | ✅ | used internally for NS analysis when configured |
+| Noise suppression (standalone NS) | ✅ | available in `crate::audio_processing::ns` and integrated in wrapper |
+| Automatic gain control (AGC) | Planned | Soon to be added |
 
 Notes and integration tips
 --------------------------

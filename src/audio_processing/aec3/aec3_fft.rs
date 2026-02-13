@@ -23,6 +23,9 @@ impl Default for Aec3Fft {
     }
 }
 
+// TODO: Since aec3 behaviour is equivalent to WebRTC's implementation at this point, consider redoing fft without this packing of complex
+// values into real arrays, and instead just use the Complex32 arrays directly. This would simplify the code and reduce the chance of bugs in packing/unpacking.
+// This would require significant refactoring of every place that uses Aec3Fft and FftData. 
 impl Aec3Fft {
     pub fn new() -> Self {
         let mut planner = FftPlanner::<f32>::new();

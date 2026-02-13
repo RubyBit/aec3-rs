@@ -6,6 +6,7 @@ pub mod channel_buffer;
 pub mod channel_layout;
 pub mod high_pass_filter;
 pub mod logging;
+pub mod ns;
 pub mod resampler;
 pub mod sparse_fir_filter;
 pub mod splitting_filter;

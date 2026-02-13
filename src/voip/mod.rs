@@ -11,6 +11,7 @@ use crate::audio_processing::aec3::{
 use crate::audio_processing::audio_buffer::AudioBuffer;
 use crate::audio_processing::high_pass_filter::HighPassFilter;
 use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
+use crate::audio_processing::ns::{NoiseSuppressor, NsConfig};
 use crate::audio_processing::stream_config::StreamConfig;
 
 /// Convenient result type used by the VoIP wrapper.
@@ -25,6 +26,8 @@ pub struct VoipAec3Builder {
     render_channels: usize, // This could be u16
     capture_channels: usize,
     enable_high_pass: bool,
+    enable_noise_suppression: bool,
+    noise_suppression_config: NsConfig,
     config: Option<EchoCanceller3Config>,
     initial_delay_ms: Option<i32>,
     diagnostics_enabled: bool,
@@ -44,6 +47,8 @@ impl VoipAec3Builder {
             render_channels,
             capture_channels,
             enable_high_pass: true,
+            enable_noise_suppression: false,
+            noise_suppression_config: NsConfig::default(),
             config: None,
             initial_delay_ms: None,
             diagnostics_enabled: false,
@@ -61,6 +66,18 @@ impl VoipAec3Builder {
     /// Enables or disables the capture high-pass filter (enabled by default).
     pub fn enable_high_pass(mut self, enable: bool) -> Self {
         self.enable_high_pass = enable;
+        self
+    }
+
+    /// Enables or disables noise suppression on the capture path.
+    pub fn enable_noise_suppression(mut self, enable: bool) -> Self {
+        self.enable_noise_suppression = enable;
+        self
+    }
+
+    /// Sets the noise suppression configuration.
+    pub fn noise_suppression_config(mut self, config: NsConfig) -> Self {
+        self.noise_suppression_config = config;
         self
     }
 
@@ -120,9 +137,18 @@ impl VoipAec3Builder {
             });
         }
 
-        let chosen_config = self.config.unwrap_or_else(|| {
+        let mut chosen_config = self.config.unwrap_or_else(|| {
             EchoCanceller3::create_default_config(self.render_channels, self.capture_channels)
         });
+
+        let ns_analyze_linear_aec_output_when_available = self.enable_noise_suppression
+            && self
+                .noise_suppression_config
+                .analyze_linear_aec_output_when_available;
+
+        if ns_analyze_linear_aec_output_when_available {
+            chosen_config.filter.export_linear_aec_output = true;
+        }
 
         if self.diagnostics_enabled {
             if let Some(dir) = &self.diagnostics_output_dir {
@@ -202,6 +228,16 @@ impl VoipAec3Builder {
         let hp_filter = self
             .enable_high_pass
             .then(|| HighPassFilter::new(internal_sample_rate, self.capture_channels));
+        let noise_suppressor = self.enable_noise_suppression.then(|| {
+            NoiseSuppressor::new(
+                self.noise_suppression_config,
+                internal_sample_rate as usize,
+                self.capture_channels,
+            )
+        });
+        let linear_output_buffer = ns_analyze_linear_aec_output_when_available.then(|| {
+            AudioBuffer::from_sample_rates(16_000, self.capture_channels, 16_000, self.capture_channels, 16_000)
+        });
 
         Ok(VoipAec3 {
             sample_rate_hz: self.capture_sample_rate_hz,
@@ -219,6 +255,9 @@ impl VoipAec3Builder {
             output_scratch,
             hp_scratch,
             hp_filter,
+            noise_suppressor,
+            linear_output_buffer,
+            ns_analyze_linear_aec_output_when_available,
         })
     }
 
@@ -250,6 +289,9 @@ pub struct VoipAec3 {
     output_scratch: Vec<Vec<f32>>,
     hp_scratch: Option<Vec<Vec<f32>>>,
     hp_filter: Option<HighPassFilter>,
+    noise_suppressor: Option<NoiseSuppressor>,
+    linear_output_buffer: Option<AudioBuffer>,
+    ns_analyze_linear_aec_output_when_available: bool,
 }
 
 impl VoipAec3 {
@@ -368,6 +410,14 @@ impl VoipAec3 {
             .collect();
         self.capture_buffer
             .copy_from(&capture_refs, &self.capture_stream_config);
+
+        if let Some(ns) = self.noise_suppressor.as_mut()
+            && (!self.ns_analyze_linear_aec_output_when_available
+                || self.linear_output_buffer.is_none())
+        {
+            ns.analyze(&self.capture_buffer);
+        }
+
         self.aec3.analyze_capture(&mut self.capture_buffer);
         self.capture_buffer.split_into_frequency_bands();
 
@@ -383,8 +433,28 @@ impl VoipAec3 {
             }
         }
 
-        self.aec3
-            .process_capture(&mut self.capture_buffer, level_change);
+        if let Some(linear_output_buffer) = self.linear_output_buffer.as_mut() {
+            self.aec3.process_capture_with_linear_output(
+                &mut self.capture_buffer,
+                linear_output_buffer,
+                level_change,
+            );
+        } else {
+            self.aec3
+                .process_capture(&mut self.capture_buffer, level_change);
+        }
+
+        if let Some(ns) = self.noise_suppressor.as_mut()
+            && self.ns_analyze_linear_aec_output_when_available
+            && let Some(linear_output_buffer) = self.linear_output_buffer.as_ref()
+        {
+            ns.analyze(linear_output_buffer);
+        }
+
+        if let Some(ns) = self.noise_suppressor.as_mut() {
+            ns.process(&mut self.capture_buffer);
+        }
+
         self.capture_buffer.merge_frequency_bands();
 
         let mut output_refs: Vec<&mut [f32]> = self

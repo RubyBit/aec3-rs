@@ -1,3 +1,4 @@
+use aec3::audio_processing::ns::{NsConfig, SuppressionLevel};
 use aec3::voip::{VoipAec3, VoipAec3Error};
 
 #[test]
@@ -104,4 +105,64 @@ fn voip_wrapper_supports_mixed_sample_rates() {
     pipeline
         .process(&capture, Some(&render), false, &mut output)
         .expect("processing failed for mixed rates");
+}
+
+#[test]
+fn voip_wrapper_supports_noise_suppression_toggle_and_config() {
+    let sample_rate_hz = 16_000;
+    let channels = 1usize;
+
+    let ns_config = NsConfig {
+        target_level: SuppressionLevel::K18dB,
+        analyze_linear_aec_output_when_available: false,
+    };
+
+    let mut pipeline = VoipAec3::builder(sample_rate_hz, channels, channels)
+        .enable_noise_suppression(true)
+        .noise_suppression_config(ns_config)
+        .build()
+        .expect("failed to build pipeline with noise suppression");
+
+    let capture_frame_samples = pipeline.capture_frame_samples();
+    let render_frame_samples = pipeline.render_frame_samples();
+    let capture = vec![0.0f32; capture_frame_samples * channels];
+    let render = vec![0.0f32; render_frame_samples * channels];
+    let mut output = vec![0.0f32; capture_frame_samples * channels];
+
+    pipeline
+        .process(&capture, Some(&render), false, &mut output)
+        .expect("processing should succeed with noise suppression enabled");
+}
+
+#[test]
+fn voip_wrapper_supports_ns_analysis_on_linear_aec_output_when_available() {
+    let sample_rate_hz = 48_000;
+    let channels = 1usize;
+
+    let ns_config = NsConfig {
+        target_level: SuppressionLevel::K12dB,
+        analyze_linear_aec_output_when_available: true,
+    };
+
+    let mut pipeline = VoipAec3::builder(sample_rate_hz, channels, channels)
+        .enable_noise_suppression(true)
+        .noise_suppression_config(ns_config)
+        .build()
+        .expect("failed to build pipeline with linear-output NS analysis");
+
+    let capture_frame_samples = pipeline.capture_frame_samples();
+    let render_frame_samples = pipeline.render_frame_samples();
+
+    let mut capture = vec![0.0f32; capture_frame_samples * channels];
+    let mut render = vec![0.0f32; render_frame_samples * channels];
+    for i in 0..capture_frame_samples {
+        let t = i as f32 / 50.0;
+        capture[i] = (t * 1.7).sin() * 1200.0;
+        render[i] = (t * 1.1).cos() * 700.0;
+    }
+
+    let mut output = vec![0.0f32; capture_frame_samples * channels];
+    pipeline
+        .process(&capture, Some(&render), false, &mut output)
+        .expect("processing should succeed with linear-output NS analysis enabled");
 }
