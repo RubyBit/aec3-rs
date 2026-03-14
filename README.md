@@ -32,6 +32,7 @@ Key features
 - **Multi-band processing** (split/merge filter banks) + FFT-based analysis.
 - Optional **capture high-pass filter** (enabled by default).
 - Optional **noise suppression** (standalone NS in `crate::audio_processing::ns` and integrated in the wrapper).
+- Optional **automatic gain control** (AGC) available in `crate::audio_processing::agc2` and integrated in the wrapper.
 - Built-in **echo suppression** / residual echo control and comfort-noise logic
   (as part of the AEC3 pipeline).
 - Small, dependency-light API intended for embedding in real-time apps.
@@ -151,25 +152,6 @@ Notes:
   the combined `process(capture, Some(render), ...)` convenience method since it
   enforces the recommended "render first" ordering.
 
-
-API summary
------------
-- VoipAec3::builder(sample_rate_hz, render_channels, capture_channels)
-  - .with_config(EchoCanceller3Config) — supply custom config
-  - .enable_high_pass(bool) — default true
-  - .initial_delay_ms(i32) — optional external delay hint (ms)
-  - .render_sample_rate_hz(usize) / .capture_sample_rate_hz(usize) — override rates
-  - .build() -> Result<VoipAec3, VoipAec3Error>
-
-- VoipAec3 methods
-  - `capture_frame_samples()` — samples per channel per 10 ms capture frame
-  - `render_frame_samples()` — samples per channel per 10 ms render frame
-  - `sample_rate_hz()` — capture sample rate configured for the pipeline
-  - `handle_render_frame(&mut self, render_frame: &[f32])` — feed far-end
-  - `process_capture_frame(&mut self, capture_frame: &[f32], level_change: bool, out: &mut [f32]) -> Result<Metrics, Error>`
-  - `process(&mut, capture_frame, Option<render_frame>, level_change, out)` — convenience
-  - `set_audio_buffer_delay(&mut self, delay_ms: i32)` — update delay hint
-  - `metrics(&self)` — get current metrics
 
 Feature status / roadmap
 ------------------------

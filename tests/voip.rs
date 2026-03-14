@@ -299,6 +299,38 @@ fn voip_wrapper_reports_recommended_input_volume_with_gain_controller2() {
 }
 
 #[test]
+fn voip_wrapper_does_not_recommend_input_volume_without_applied_input_volume() {
+    let sample_rate_hz = 16_000;
+    let channels = 1usize;
+
+    let mut gc2_config = GainController2Config::default();
+    gc2_config.adaptive_digital.enabled = true;
+    gc2_config.input_volume_controller.enabled = true;
+
+    let mut pipeline = VoipAec3::builder(sample_rate_hz, channels, channels)
+        .enable_gain_controller2(true)
+        .gain_controller2_config(gc2_config)
+        .build()
+        .expect("failed to build pipeline with gain controller2");
+
+    let capture_frame_samples = pipeline.capture_frame_samples();
+    let capture = vec![3000.0f32; capture_frame_samples * channels];
+    let mut output = vec![0.0f32; capture_frame_samples * channels];
+
+    for _ in 0..10 {
+        pipeline
+            .process(&capture, None, false, &mut output)
+            .expect("processing should succeed");
+    }
+
+    assert_eq!(
+        pipeline.recommended_input_volume(),
+        None,
+        "recommended input volume should remain None when applied input volume was never provided"
+    );
+}
+
+#[test]
 fn voip_wrapper_supports_noise_suppression_with_gain_controller2() {
     let sample_rate_hz = 16_000;
     let channels = 1usize;

@@ -1,6 +1,6 @@
 [package]
 name = "aec3"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 authors = ["Angelos-Ermis Mangos"]
 license = "MIT OR BSD-3-Clause"

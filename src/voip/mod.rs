@@ -17,8 +17,6 @@ use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, Diagnosti
 use crate::audio_processing::ns::{NoiseSuppressor, NsConfig};
 use crate::audio_processing::stream_config::StreamConfig;
 
-const DEFAULT_APPLIED_INPUT_VOLUME: i32 = 255;
-
 /// Convenient result type used by the VoIP wrapper.
 pub type VoipResult<T> = std::result::Result<T, VoipAec3Error>;
 
@@ -303,7 +301,7 @@ impl VoipAec3Builder {
             linear_output_buffer,
             ns_analyze_linear_aec_output_when_available,
             gain_controller2,
-            applied_input_volume: DEFAULT_APPLIED_INPUT_VOLUME,
+            applied_input_volume: None,
             applied_input_volume_changed: false,
         })
     }
@@ -340,7 +338,7 @@ pub struct VoipAec3 {
     linear_output_buffer: Option<AudioBuffer>,
     ns_analyze_linear_aec_output_when_available: bool,
     gain_controller2: Option<GainController2>,
-    applied_input_volume: i32,
+    applied_input_volume: Option<i32>,
     applied_input_volume_changed: bool,
 }
 
@@ -382,8 +380,9 @@ impl VoipAec3 {
             });
         }
 
-        self.applied_input_volume_changed = self.applied_input_volume != input_volume;
-        self.applied_input_volume = input_volume;
+        self.applied_input_volume_changed =
+            self.applied_input_volume.is_some_and(|v| v != input_volume);
+        self.applied_input_volume = Some(input_volume);
         Ok(())
     }
 
@@ -500,8 +499,10 @@ impl VoipAec3 {
         self.capture_buffer
             .copy_from(&capture_refs, &self.capture_stream_config);
 
-        if let Some(gc2) = self.gain_controller2.as_mut() {
-            gc2.analyze(self.applied_input_volume, &self.capture_buffer);
+        if let Some(gc2) = self.gain_controller2.as_mut()
+            && let Some(applied_input_volume) = self.applied_input_volume
+        {
+            gc2.analyze(applied_input_volume, &self.capture_buffer);
         }
 
         if let Some(ns) = self.noise_suppressor.as_mut()
