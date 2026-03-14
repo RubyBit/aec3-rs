@@ -1,10 +1,12 @@
 pub mod aec3;
+pub mod agc2;
 pub mod audio_buffer;
 pub mod audio_frame;
 pub mod audio_util;
 pub mod channel_buffer;
 pub mod channel_layout;
 pub mod high_pass_filter;
+pub mod gain_controller2;
 pub mod logging;
 pub mod ns;
 pub mod resampler;

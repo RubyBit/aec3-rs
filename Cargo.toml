@@ -6,6 +6,7 @@ authors = ["Angelos-Ermis Mangos"]
 license = "MIT OR BSD-3-Clause"
 description = "An acoustic echo canceller written in rust based on the WebRTC aec3 project"
 repository = "https://github.com/RubyBit/aec3-rs"
+exclude = ["tests/test_data/**"]
 
 [dependencies]
 num-complex = "0.4.6"

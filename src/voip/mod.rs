@@ -8,11 +8,16 @@ use crate::api::{
 use crate::audio_processing::aec3::{
     echo_canceller3::EchoCanceller3,
 };
+use crate::audio_processing::agc2::cpu_features::AvailableCpuFeatures;
+use crate::audio_processing::agc2::input_volume_controller::Config as InputVolumeControllerConfig;
 use crate::audio_processing::audio_buffer::AudioBuffer;
+use crate::audio_processing::gain_controller2::{GainController2, GainController2Config};
 use crate::audio_processing::high_pass_filter::HighPassFilter;
 use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 use crate::audio_processing::ns::{NoiseSuppressor, NsConfig};
 use crate::audio_processing::stream_config::StreamConfig;
+
+const DEFAULT_APPLIED_INPUT_VOLUME: i32 = 255;
 
 /// Convenient result type used by the VoIP wrapper.
 pub type VoipResult<T> = std::result::Result<T, VoipAec3Error>;
@@ -27,7 +32,10 @@ pub struct VoipAec3Builder {
     capture_channels: usize,
     enable_high_pass: bool,
     enable_noise_suppression: bool,
+    enable_gain_controller2: bool,
     noise_suppression_config: NsConfig,
+    gain_controller2_config: GainController2Config,
+    input_volume_controller_config: InputVolumeControllerConfig,
     config: Option<EchoCanceller3Config>,
     initial_delay_ms: Option<i32>,
     diagnostics_enabled: bool,
@@ -48,7 +56,10 @@ impl VoipAec3Builder {
             capture_channels,
             enable_high_pass: true,
             enable_noise_suppression: false,
+            enable_gain_controller2: false,
             noise_suppression_config: NsConfig::default(),
+            gain_controller2_config: GainController2Config::default(),
+            input_volume_controller_config: InputVolumeControllerConfig::default(),
             config: None,
             initial_delay_ms: None,
             diagnostics_enabled: false,
@@ -78,6 +89,24 @@ impl VoipAec3Builder {
     /// Sets the noise suppression configuration.
     pub fn noise_suppression_config(mut self, config: NsConfig) -> Self {
         self.noise_suppression_config = config;
+        self
+    }
+
+    /// Enables or disables AGC2 on the capture path (disabled by default).
+    pub fn enable_gain_controller2(mut self, enable: bool) -> Self {
+        self.enable_gain_controller2 = enable;
+        self
+    }
+
+    /// Sets the AGC2 top-level configuration.
+    pub fn gain_controller2_config(mut self, config: GainController2Config) -> Self {
+        self.gain_controller2_config = config;
+        self
+    }
+
+    /// Sets the AGC2 input volume controller tuning configuration.
+    pub fn input_volume_controller_config(mut self, config: InputVolumeControllerConfig) -> Self {
+        self.input_volume_controller_config = config;
         self
     }
 
@@ -239,6 +268,21 @@ impl VoipAec3Builder {
             AudioBuffer::from_sample_rates(16_000, self.capture_channels, 16_000, self.capture_channels, 16_000)
         });
 
+        let gain_controller2 = if self.enable_gain_controller2 {
+            if !GainController2::validate(&self.gain_controller2_config) {
+                return Err(VoipAec3Error::InvalidGainController2Config);
+            }
+            Some(GainController2::new(
+                self.gain_controller2_config,
+                self.input_volume_controller_config,
+                internal_sample_rate as usize,
+                self.capture_channels,
+                true,
+            ))
+        } else {
+            None
+        };
+
         Ok(VoipAec3 {
             sample_rate_hz: self.capture_sample_rate_hz,
             capture_frame_samples,
@@ -258,6 +302,9 @@ impl VoipAec3Builder {
             noise_suppressor,
             linear_output_buffer,
             ns_analyze_linear_aec_output_when_available,
+            gain_controller2,
+            applied_input_volume: DEFAULT_APPLIED_INPUT_VOLUME,
+            applied_input_volume_changed: false,
         })
     }
 
@@ -292,6 +339,9 @@ pub struct VoipAec3 {
     noise_suppressor: Option<NoiseSuppressor>,
     linear_output_buffer: Option<AudioBuffer>,
     ns_analyze_linear_aec_output_when_available: bool,
+    gain_controller2: Option<GainController2>,
+    applied_input_volume: i32,
+    applied_input_volume_changed: bool,
 }
 
 impl VoipAec3 {
@@ -322,6 +372,45 @@ impl VoipAec3 {
     /// Provides the current metrics without running another processing step.
     pub fn metrics(&self) -> Metrics {
         self.aec3.metrics()
+    }
+
+    /// Updates the applied microphone input volume used by AGC2 input-volume analysis.
+    pub fn set_applied_input_volume(&mut self, input_volume: i32) -> VoipResult<()> {
+        if !(0..=255).contains(&input_volume) {
+            return Err(VoipAec3Error::InvalidAppliedInputVolume {
+                actual: input_volume,
+            });
+        }
+
+        self.applied_input_volume_changed = self.applied_input_volume != input_volume;
+        self.applied_input_volume = input_volume;
+        Ok(())
+    }
+
+    /// Returns the last AGC2 recommended input volume, if AGC2 is enabled.
+    pub fn recommended_input_volume(&self) -> Option<i32> {
+        self.gain_controller2
+            .as_ref()
+            .and_then(|gc2| gc2.recommended_input_volume())
+    }
+
+    /// Updates AGC2 fixed digital gain in dB at runtime.
+    pub fn set_fixed_gain_db(&mut self, gain_db: f32) {
+        if let Some(gc2) = self.gain_controller2.as_mut() {
+            gc2.set_fixed_gain_db(gain_db);
+        }
+    }
+
+    /// Passes capture-output-used state to AGC2 input-volume controller.
+    pub fn set_capture_output_used(&mut self, capture_output_used: bool) {
+        if let Some(gc2) = self.gain_controller2.as_mut() {
+            gc2.set_capture_output_used(capture_output_used);
+        }
+    }
+
+    /// Returns AGC2 CPU feature flags when AGC2 is enabled.
+    pub fn gain_controller2_cpu_features(&self) -> Option<AvailableCpuFeatures> {
+        self.gain_controller2.as_ref().map(|gc2| gc2.cpu_features())
     }
 
     /// Updates the audio buffer delay hint at runtime.
@@ -411,6 +500,10 @@ impl VoipAec3 {
         self.capture_buffer
             .copy_from(&capture_refs, &self.capture_stream_config);
 
+        if let Some(gc2) = self.gain_controller2.as_mut() {
+            gc2.analyze(self.applied_input_volume, &self.capture_buffer);
+        }
+
         if let Some(ns) = self.noise_suppressor.as_mut()
             && (!self.ns_analyze_linear_aec_output_when_available
                 || self.linear_output_buffer.is_none())
@@ -456,6 +549,11 @@ impl VoipAec3 {
         }
 
         self.capture_buffer.merge_frequency_bands();
+
+        if let Some(gc2) = self.gain_controller2.as_mut() {
+            gc2.process(self.applied_input_volume_changed, &mut self.capture_buffer);
+            self.applied_input_volume_changed = false;
+        }
 
         let mut output_refs: Vec<&mut [f32]> = self
             .output_scratch
@@ -565,6 +663,8 @@ fn planar_to_interleaved(
 pub enum VoipAec3Error {
     UnsupportedSampleRate { render: usize, capture: usize },
     InvalidChannelCount { render: usize, capture: usize },
+    InvalidGainController2Config,
+    InvalidAppliedInputVolume { actual: i32 },
     CaptureFrameSize { expected: usize, actual: usize },
     RenderFrameSize { expected: usize, actual: usize },
     OutputBufferTooSmall { required: usize, actual: usize },
@@ -582,6 +682,14 @@ impl fmt::Display for VoipAec3Error {
             VoipAec3Error::InvalidChannelCount { render, capture } => write!(
                 f,
                 "channel counts must be > 0 (render={render}, capture={capture})"
+            ),
+            VoipAec3Error::InvalidGainController2Config => write!(
+                f,
+                "invalid gain_controller2 configuration"
+            ),
+            VoipAec3Error::InvalidAppliedInputVolume { actual } => write!(
+                f,
+                "invalid applied input volume: expected in [0, 255], got {actual}"
             ),
             VoipAec3Error::CaptureFrameSize { expected, actual } => write!(
                 f,

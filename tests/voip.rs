@@ -1,3 +1,5 @@
+use aec3::audio_processing::agc2::input_volume_controller::Config as InputVolumeControllerConfig;
+use aec3::audio_processing::gain_controller2::GainController2Config;
 use aec3::audio_processing::ns::{NsConfig, SuppressionLevel};
 use aec3::voip::{VoipAec3, VoipAec3Error};
 
@@ -165,4 +167,156 @@ fn voip_wrapper_supports_ns_analysis_on_linear_aec_output_when_available() {
     pipeline
         .process(&capture, Some(&render), false, &mut output)
         .expect("processing should succeed with linear-output NS analysis enabled");
+}
+
+#[test]
+fn voip_wrapper_supports_gain_controller2_toggle_and_config() {
+    let sample_rate_hz = 16_000;
+    let channels = 1usize;
+
+    let mut gc2_config = GainController2Config::default();
+    gc2_config.fixed_digital.gain_db = 6.0;
+
+    let mut pipeline = VoipAec3::builder(sample_rate_hz, channels, channels)
+        .enable_gain_controller2(true)
+        .gain_controller2_config(gc2_config)
+        .input_volume_controller_config(InputVolumeControllerConfig::default())
+        .build()
+        .expect("failed to build pipeline with gain controller2");
+
+    let capture_frame_samples = pipeline.capture_frame_samples();
+    let render_frame_samples = pipeline.render_frame_samples();
+    let capture = vec![1000.0f32; capture_frame_samples * channels];
+    let render = vec![0.0f32; render_frame_samples * channels];
+    let mut output = vec![0.0f32; capture_frame_samples * channels];
+
+    pipeline
+        .process(&capture, Some(&render), false, &mut output)
+        .expect("processing should succeed with gain controller2 enabled");
+}
+
+#[test]
+fn voip_wrapper_validates_applied_input_volume_for_gain_controller2() {
+    let sample_rate_hz = 16_000;
+    let channels = 1usize;
+
+    let mut pipeline = VoipAec3::builder(sample_rate_hz, channels, channels)
+        .enable_gain_controller2(true)
+        .build()
+        .expect("failed to build pipeline with gain controller2");
+
+    let err = pipeline.set_applied_input_volume(300).unwrap_err();
+    assert!(matches!(
+        err,
+        VoipAec3Error::InvalidAppliedInputVolume { actual: 300 }
+    ));
+}
+
+#[test]
+fn voip_wrapper_fixed_gain_control_changes_output_level() {
+    let sample_rate_hz = 16_000;
+    let channels = 1usize;
+
+    let mut disabled_adaptive = GainController2Config::default();
+    disabled_adaptive.adaptive_digital.enabled = false;
+    disabled_adaptive.input_volume_controller.enabled = false;
+    disabled_adaptive.fixed_digital.gain_db = 0.0;
+
+    let mut pipeline_no_gain = VoipAec3::builder(sample_rate_hz, channels, channels)
+        .enable_gain_controller2(true)
+        .gain_controller2_config(disabled_adaptive)
+        .build()
+        .expect("failed to build no-gain pipeline");
+
+    let mut pipeline_with_gain = VoipAec3::builder(sample_rate_hz, channels, channels)
+        .enable_gain_controller2(true)
+        .gain_controller2_config(disabled_adaptive)
+        .build()
+        .expect("failed to build gain pipeline");
+    pipeline_with_gain.set_fixed_gain_db(20.0);
+
+    let capture_frame_samples = pipeline_no_gain.capture_frame_samples();
+    let capture = vec![0.01f32; capture_frame_samples * channels];
+    let mut out_no_gain = vec![0.0f32; capture_frame_samples * channels];
+    let mut out_with_gain = vec![0.0f32; capture_frame_samples * channels];
+
+    for _ in 0..5 {
+        pipeline_no_gain
+            .process(&capture, None, false, &mut out_no_gain)
+            .expect("processing should succeed");
+        pipeline_with_gain
+            .process(&capture, None, false, &mut out_with_gain)
+            .expect("processing should succeed");
+    }
+
+    let no_gain_avg_abs =
+        out_no_gain.iter().map(|v| v.abs()).sum::<f32>() / out_no_gain.len() as f32;
+    let with_gain_avg_abs =
+        out_with_gain.iter().map(|v| v.abs()).sum::<f32>() / out_with_gain.len() as f32;
+
+    assert!(
+        with_gain_avg_abs > no_gain_avg_abs,
+        "expected fixed gain to increase output amplitude"
+    );
+}
+
+#[test]
+fn voip_wrapper_reports_recommended_input_volume_with_gain_controller2() {
+    let sample_rate_hz = 16_000;
+    let channels = 1usize;
+
+    let mut gc2_config = GainController2Config::default();
+    gc2_config.adaptive_digital.enabled = true;
+    gc2_config.input_volume_controller.enabled = true;
+
+    let mut pipeline = VoipAec3::builder(sample_rate_hz, channels, channels)
+        .enable_gain_controller2(true)
+        .gain_controller2_config(gc2_config)
+        .build()
+        .expect("failed to build pipeline with gain controller2");
+
+    let capture_frame_samples = pipeline.capture_frame_samples();
+    let capture = vec![3000.0f32; capture_frame_samples * channels];
+    let mut output = vec![0.0f32; capture_frame_samples * channels];
+
+    pipeline
+        .set_applied_input_volume(128)
+        .expect("valid applied input volume should be accepted");
+
+    for _ in 0..10 {
+        pipeline
+            .process(&capture, None, false, &mut output)
+            .expect("processing should succeed");
+        if pipeline.recommended_input_volume().is_some() {
+            break;
+        }
+    }
+
+    assert!(
+        pipeline.recommended_input_volume().is_some(),
+        "expected gain controller2 to provide a recommended input volume"
+    );
+}
+
+#[test]
+fn voip_wrapper_supports_noise_suppression_with_gain_controller2() {
+    let sample_rate_hz = 16_000;
+    let channels = 1usize;
+
+    let mut pipeline = VoipAec3::builder(sample_rate_hz, channels, channels)
+        .enable_noise_suppression(true)
+        .noise_suppression_config(NsConfig::default())
+        .enable_gain_controller2(true)
+        .build()
+        .expect("failed to build pipeline with NS + gain controller2");
+
+    let capture_frame_samples = pipeline.capture_frame_samples();
+    let render_frame_samples = pipeline.render_frame_samples();
+    let capture = vec![500.0f32; capture_frame_samples * channels];
+    let render = vec![100.0f32; render_frame_samples * channels];
+    let mut output = vec![0.0f32; capture_frame_samples * channels];
+
+    pipeline
+        .process(&capture, Some(&render), false, &mut output)
+        .expect("processing should succeed with NS + gain controller2");
 }

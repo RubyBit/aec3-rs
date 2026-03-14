@@ -4,7 +4,7 @@ aec3 — Rust port of WebRTC AEC3
 ================================
 
 A small, pragmatic Rust port of WebRTC's **AEC3 acoustic echo canceller**, including some of the
-other audio processing goodies (high-pass filter, noise suppression).
+other audio processing goodies (high-pass filter, noise suppression, automatic gain control).
 
 This crate is mainly for **real-time echo cancellation** in VoIP-style pipelines: it
 uses far-end audio (the "render" / speaker signal) as a reference and removes
@@ -13,7 +13,7 @@ its echo from the near-end microphone capture.
 It exposes:
 - the full low-level AEC3 implementation in `crate::audio_processing::aec3`, and
 - an ergonomic VoIP wrapper `crate::voip::VoipAec3` for typical "render + capture"
-  streaming. This also provides the other audio processing features like an optional high-pass filter and noise suppression (and soon automatic gain control as well).
+  streaming. This also provides the other audio processing features like an optional high-pass filter, noise suppression and automatic gain control.
 
 At a glance
 -----------
@@ -66,6 +66,7 @@ use aec3::voip::VoipAec3;
 let mut pipeline = VoipAec3::builder(48_000, 2, 2)
     .initial_delay_ms(116)
     .enable_high_pass(true) // .enable_noise_suppression(true) — if you want to enable NS as well
+    // .enable_gain_controller2(true) — if you want to enable AGC2
     .build()
     .expect("failed to create pipeline");
 
@@ -188,7 +189,8 @@ Feature status / roadmap
 | Diagnostics dumping | ✅ | available through the optional `diagnostics` feature |
 | Optional linear AEC output path in wrapper | ✅ | used internally for NS analysis when configured |
 | Noise suppression (standalone NS) | ✅ | available in `crate::audio_processing::ns` and integrated in wrapper |
-| Automatic gain control (AGC) | Planned | Soon to be added |
+| Automatic gain control (AGC) | ✅ | available in `crate::audio_processing::agc2` |
+| Noise suppression 2 (NS2) | Planned | soon, utilizing rnnoise-based models for improved suppression quality |
 
 Notes and integration tips
 --------------------------
