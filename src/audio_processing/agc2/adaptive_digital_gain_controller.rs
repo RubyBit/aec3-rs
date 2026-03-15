@@ -17,13 +17,13 @@ pub struct AdaptiveDigitalConfig {
 
 impl Default for AdaptiveDigitalConfig {
     fn default() -> Self {
-        // WebRTC AGC2 defaults (from AudioProcessing::Config::GainController2::AdaptiveDigital).
+        // WebRTC AGC2 defaults (from `api/audio/audio_processing.h`).
         Self {
-            max_gain_db: 30.0,
-            headroom_db: 6.0,
-            max_gain_change_db_per_second: 3.0,
+            headroom_db: 5.0,
+            max_gain_db: 50.0,
+            initial_gain_db: 15.0,
+            max_gain_change_db_per_second: 6.0,
             max_output_noise_level_dbfs: -50.0,
-            initial_gain_db: 8.0,
         }
     }
 }

@@ -839,8 +839,8 @@ mod tests {
         let pcm = i16_samples_from_le_bytes(TEST_SAMPLES_PCM_48K_STEREO);
         let mut pcm_pos = 0usize;
         let stream_config = StreamConfig::new(SAMPLE_RATE_HZ, STEREO, false);
-        let mut capture_input = vec![0.0f32; stream_config.num_frames() * stream_config.num_channels()];
-        let mut capture_planar = vec![vec![0.0f32; stream_config.num_frames()]; stream_config.num_channels()];
+        let mut capture_input =
+            vec![0.0f32; stream_config.num_frames() * stream_config.num_channels()];
 
         let mut audio_buffer = AudioBuffer::from_sample_rates(
             SAMPLE_RATE_HZ,
@@ -864,13 +864,22 @@ mod tests {
                 *x *= gain;
             }
 
-            for i in 0..stream_config.num_frames() {
-                for ch in 0..stream_config.num_channels() {
-                    capture_planar[ch][i] = capture_input[i * stream_config.num_channels() + ch];
-                }
+            // Mirror the upstream WebRTC test setup exactly, including its
+            // `CopyVectorToAudioBuffer`/`SetupFrame` quirk: `capture_input` is
+            // interleaved (L0, R0, L1, R1, ...) but is passed to `AudioBuffer`
+            // as if it were planar by splitting it into consecutive channel
+            // blocks. This produces a "garbled" per-channel signal and is what
+            // the upstream test converges on.
+            // TODO: Honestly, this seems like a bug in the upstream test,
+            // I want to remove it eventually but better mirror it for now to ensure parity.
+            let frames = stream_config.num_frames();
+            let channels = stream_config.num_channels();
+            let mut capture_refs: Vec<&[f32]> = Vec::with_capacity(channels);
+            for ch in 0..channels {
+                let start = ch * frames;
+                let end = start + frames;
+                capture_refs.push(&capture_input[start..end]);
             }
-
-            let capture_refs: Vec<&[f32]> = capture_planar.iter().map(|ch| ch.as_slice()).collect();
             audio_buffer.copy_from(&capture_refs, &stream_config);
             agc2.process(false, &mut audio_buffer);
         }
@@ -879,14 +888,7 @@ mod tests {
         agc2.process(false, &mut audio_buffer);
         let applied_gain_db = 20.0 * audio_buffer.channel(0)[0].log10();
 
-        // NOTE: The upstream C++ test expects 7.0 dB, but uses a garbled data
-        // layout due to a quirk in CopyVectorToAudioBuffer/SetupFrame (which
-        // splits the interleaved buffer into consecutive blocks rather than
-        // properly deinterleaving). This Rust test correctly deinterleaves the
-        // stereo PCM data, so the AGC2 pipeline sees proper left/right channels.
-        // The different input data leads to different VAD/speech-level
-        // trajectories and thus a different converged gain.
-        const EXPECTED_GAIN_DB: f32 = 11.1;
+        const EXPECTED_GAIN_DB: f32 = 7.0;
         const TOLERANCE_DB: f32 = 0.3;
         assert!(
             (applied_gain_db - EXPECTED_GAIN_DB).abs() <= TOLERANCE_DB,
