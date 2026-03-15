@@ -66,7 +66,8 @@ use aec3::voip::VoipAec3;
 
 let mut pipeline = VoipAec3::builder(48_000, 2, 2)
     .initial_delay_ms(116)
-    .enable_high_pass(true) // .enable_noise_suppression(true) — if you want to enable NS as well
+    .enable_high_pass(true) 
+    // .enable_noise_suppression(true) — if you want to enable NS as well
     // .enable_gain_controller2(true) — if you want to enable AGC2
     .build()
     .expect("failed to create pipeline");
@@ -203,7 +204,7 @@ Community projects
 There are a few community-maintained projects that integrate with or wrap this
 crate. For example:
 
-- aec3-py — a community Python wrapper for this crate: https://github.com/RustedBytes/aec3-py
+- aec3-py — a community Python wrapper for this crate: https://github.com/RustedBytes/aec3-py (outdated at the moment, so I suggest forking and updating if you want to use it)
 
 If you maintain a project that uses or wraps `aec3`, please open a PR to add it
 here so others can find it easily.
