@@ -1,216 +1,255 @@
 [![crates.io](https://img.shields.io/crates/v/aec3.svg)](https://crates.io/crates/aec3)
 
-aec3 — Rust port of WebRTC AEC3
-================================
+aec3 - Rust port of WebRTC AEC3
+===============================
 
-A small, pragmatic Rust port of WebRTC's **AEC3 acoustic echo canceller**, including some of the
-other audio processing goodies (high-pass filter, noise suppression, automatic gain control).
+`aec3` is a Rust port of WebRTC's AEC3 acoustic echo canceller plus a growing
+set of reusable DSP building blocks. In `0.2`, the crate moves away from the
+old special-purpose `voip` wrapper and exposes a generic event-driven DAG:
 
-This crate is mainly for **real-time echo cancellation** in VoIP-style pipelines: it
-uses far-end audio (the "render" / speaker signal) as a reference and removes
-its echo from the near-end microphone capture. 
+- `aec3::graph` is the runtime, scheduling, ports, packets, and validation layer
+- `aec3::nodes` contains built-in audio/DSP nodes such as AEC3, NS, AGC2, HPF,
+  resampling, and taps
+- `aec3::pipelines` adds ergonomic builders on top of the graph for common layouts
 
-It exposes:
-- the full low-level AEC3 implementation in `crate::audio_processing::aec3`, and
-- an ergonomic VoIP wrapper `crate::voip::VoipAec3` for typical "render + capture"
-  streaming. This also provides the other audio processing features like an optional high-pass filter, noise suppression and automatic gain control.
+This lets you model capture-only paths, duplex AEC paths, side-channel analysis
+links, multi-output graphs, and custom user nodes with one execution model. This will also allow more flexible scheduling and optimization opportunities in the future such as running nodes at different rates, dynamic reconfiguration, and more efficient fan-out patterns + easier to integrate custom processing on your pipelines. 
 
-At a glance
+NOTE: This is a work in progress and the API is expected to evolve. Feedback and contributions are very welcome, specially in terms of ergonomics and use cases but also performance (i.e I am still validating internally if this design is useful). You still utilize the processing modules by themselves in `aec3::audio_processing` if you want to avoid the graph API for now or have no use for it.
+
+Highlights
+----------
+
+- Generic typed graph builder with `Source<T>`, `Sink<T>`, `InPort<T>`, and `OutPort<T>`
+- Asynchronous stream arrival: render, capture, and control packets can arrive independently
+- AEC3 as an ordinary node with optional linear-output, metrics, diagnostics, and delay-control ports
+- Side inputs for nodes like noise suppression without hardcoding one pipeline shape
+- Shared packet handles and copy-on-write audio buffers to minimize copying on fan-out paths
+- Runtime node control states and resets for bypass/freeze/reinitialize workflows
+- `aec3::pipelines::linear` for the common `render + capture -> HFP -> AEC3 -> NS -> AGC2` path
+- Strong typing for ordinary wiring, plus runtime validation for graph invariants and format mismatches
+
+Quick start
 -----------
-- **Audio format:** interleaved `f32` frames
-- **Frame size:** fixed **10 ms** frames (`frame_samples_per_channel * channels`)
-- **Sample rates (wrapper input):** 16–48 kHz inclusive, including **44.1 kHz**
-  (internally resampled to **48 kHz** for the AEC core)
-- **AEC core full-band rates:** 16/32/48 kHz
-- **Render/capture can be synchronous or asynchronous:** you can feed render and
-  capture independently when they don’t arrive at the same time.
 
-Key features
-------------
-- Implements the **AEC3 algorithm** aligned with the WebRTC reference pipeline.
-- **Delay estimation + alignment** between render and capture.
-- **Multi-band processing** (split/merge filter banks) + FFT-based analysis.
-- Optional **capture high-pass filter** (enabled by default).
-- Optional **noise suppression** (standalone NS in `crate::audio_processing::ns` and integrated in the wrapper).
-- Optional **automatic gain control** (AGC) available in `crate::audio_processing::agc2` and integrated in the wrapper.
-- Built-in **echo suppression** / residual echo control and comfort-noise logic
-  (as part of the AEC3 pipeline).
-- Small, dependency-light API intended for embedding in real-time apps.
-
-Quick start (development)
--------------------------
-1. Build and run the karaoke example (loopback + microphone). On Windows
-   PowerShell:
+Run the examples:
 
 ```powershell
 cargo run --example karaoke_loopback
+cargo run --example karaoke_loopback_delayed
 ```
 
-2. Run the test-suite (unit + integration):
+Run the test suite:
 
 ```powershell
 cargo test
 ```
 
-Using the VOIP wrapper
-----------------------
-The `VoipAec3` wrapper is the recommended way to integrate AEC3 into a
-real-time pipeline. It handles conversion between interleaved frame buffers
-and the internal multi-band audio buffers, applies an optional high-pass
-filter, and exposes a small set of methods mirroring the reference demo.
+Core model
+----------
 
-Example (synchronous caller — render + capture available together):
+The crate is organized around three top-level modules:
+
+- `aec3::graph`
+  - graph builder
+  - typed ports and packets
+  - queueing, scheduling, and backpressure
+  - packet timestamps and alignment rules
+- `aec3::nodes`
+  - `audio`: `AudioFormat`, `AudioChunk`, pooled audio storage
+  - `aec3`: echo cancellation node
+  - `agc2`: gain control node
+  - `ns`: noise suppression node
+  - `hpf`: high-pass filter node
+  - `resample`: explicit sample-rate / channel adaptation
+  - `tap`: packet fan-out without forcing eager copies
+- `aec3::pipelines`
+  - `linear`: convenience builder/runtime wrapper for the most common voice chain
+- `aec3::audio_processing`
+  - low-level processing modules ported from WebRTC (e.g. `aec3::audio_processing::aec3::echo_canceller3`, `aec3::audio_processing::gain_controller2`, `aec3::audio_processing::ns::noise_suppressor`)
+
+All built-in DSP nodes operate on 10 ms audio frames carried as `AudioChunk`.
+
+Common voice pipeline
+---------------------
+
+If you just want the standard voice path, start with `aec3::pipelines::linear`:
 
 ```rust
-use aec3::voip::VoipAec3;
+use aec3::nodes::audio::AudioFormat;
+use aec3::pipelines::linear;
 
-let mut pipeline = VoipAec3::builder(48_000, 2, 2)
+let format = AudioFormat::ten_ms(48_000, 1);
+let mut pipeline = linear::builder(format, format)
     .initial_delay_ms(116)
-    .enable_high_pass(true) 
-    // .enable_noise_suppression(true) — if you want to enable NS as well
-    // .enable_gain_controller2(true) — if you want to enable AGC2
-    .build()
-    .expect("failed to create pipeline");
+    .export_metrics(true)
+    .build()?;
 
-// Per 10 ms captured frame (interleaved f32 samples):
-let capture_frame: Vec<f32> = /* filled by your capture callback */;
-let render_frame: Vec<f32> = /* optional far-end data */;
-let mut out = vec![0.0f32; capture_frame.len()];
+let render = vec![0.0f32; format.sample_count()];
+let capture = vec![0.0f32; format.sample_count()];
+let mut output = vec![0.0f32; format.sample_count()];
 
-let metrics = pipeline.process(&capture_frame, Some(&render_frame), false, &mut out)?;
-println!("AEC metrics: {:?}", metrics);
+pipeline.handle_render_frame(&render)?;
+let produced = pipeline.process_capture_frame(&capture, &mut output)?;
+assert!(produced);
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Example (asynchronous caller — render/capture arrive at different times)
------------------------------------------------------------------------
-In many real systems (especially on desktop), the far-end reference (loopback)
-and microphone capture don’t arrive in lockstep. The wrapper supports this by
-exposing separate methods:
+`linear::builder(...).add_to(&mut GraphBuilder)` is also available when you
+want the convenience layout but still plan to attach extra outputs manually.
 
-- `handle_render_frame(&mut self, render_frame: &[f32])`
-- `process_capture_frame(&mut self, capture_frame: &[f32], level_change: bool, out: &mut [f32])`
-
-The key rule is:
-
-- Feed **render** frames as soon as you get them.
-- If you need to simulate or compensate device buffering latency, **delay the
-  capture path**, not the render reference.
-
-Minimal pattern (single processing thread with queues):
+Building a graph
+----------------
 
 ```rust
-use aec3::voip::VoipAec3;
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use ::aec3::graph::{GraphBuilder, Packet, PacketMeta, QueueConfig, Runtime, RuntimeOptions};
+use ::aec3::nodes::{
+    aec3 as aec3_node,
+    agc2,
+    audio::{AudioChunk, AudioFormat},
+    ns,
+};
 
-let mut pipeline = VoipAec3::builder(44_100, 2, 1)
-    .enable_high_pass(true)
-    .build()
-    .expect("failed to create pipeline");
+let format = AudioFormat::ten_ms(48_000, 1);
 
-// Optional: if you have an external estimate of device buffering delay.
-pipeline.set_audio_buffer_delay(120);
+let mut graph = GraphBuilder::new();
+let mic = graph.source::<AudioChunk>("mic", QueueConfig::audio_default());
+let render = graph.source::<AudioChunk>("render", QueueConfig::audio_default());
+let output = graph.sink::<AudioChunk>("output", QueueConfig::audio_default());
 
-// In real systems, this is unecessary or added to compensate for
-// non causal buffering on the capture path <- this could be handled with ring buffers.
-let target_capture_delay = Duration::from_millis(20);
+let agc_pre = agc2::builder(format).add_to(&mut graph)?;
+let echo = aec3_node::builder(format, format)
+    .export_linear_output(true)
+    .export_metrics(true)
+    .add_to(&mut graph)?;
+let suppressor = ns::builder(format)
+    .with_analysis_input(true)
+    .add_to(&mut graph)?;
 
-// These queues are typically filled by your audio callbacks.
-let mut pending_render: VecDeque<Vec<f32>> = VecDeque::new();
-let mut pending_capture: VecDeque<(Instant, Vec<f32>)> = VecDeque::new();
+graph.connect(mic, agc_pre.audio_in)?;
+graph.connect(agc_pre.audio_out, echo.capture_in)?;
+graph.connect(render, echo.render_in)?;
+graph.connect(echo.capture_out, suppressor.audio_in)?;
+graph.connect(
+    echo.linear_out.unwrap(),
+    suppressor.analysis_in.unwrap(),
+)?;
+graph.connect(suppressor.audio_out, output)?;
 
-loop {
-    // 1) Drain render frames immediately to keep the reference current.
-    while let Some(render_frame) = pending_render.pop_front() {
-        pipeline.handle_render_frame(&render_frame).unwrap();
-    }
+let spec = graph.build()?;
+let mut runtime = Runtime::new(spec, RuntimeOptions)?;
 
-    // 2) Process capture frames once they’ve aged past the target delay.
-    while let Some((ts, _)) = pending_capture.front() {
-        if ts.elapsed() < target_capture_delay {
-            break;
-        }
+runtime.push(
+    render,
+    Packet {
+        meta: PacketMeta::default(),
+        payload: AudioChunk::silence(format),
+    },
+)?;
+runtime.run_until_stalled()?;
 
-        let (_ts, capture_frame) = pending_capture.pop_front().unwrap();
-        let mut out = vec![0.0f32; capture_frame.len()];
+runtime.push(
+    mic,
+    Packet {
+        meta: PacketMeta::default(),
+        payload: AudioChunk::silence(format),
+    },
+)?;
+runtime.run_until_stalled()?;
 
-        let metrics = pipeline
-            .process_capture_frame(&capture_frame, false, &mut out)
-            .unwrap();
-
-        // Send `out` to your encoder / stream, and optionally log metrics.
-        let _ = metrics;
-    }
-
-    // In real code: block on your audio/event sources instead of busy looping.
+if let Some(packet) = runtime.try_pull(output)? {
+    println!("processed {} samples", packet.payload().samples().len());
 }
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 Notes:
-- The example uses **44.1 kHz** input: internally the canceller runs at **48 kHz**
-  and resamples as needed.
-- If you also have a render frame available at the same time as capture, prefer
-  the combined `process(capture, Some(render), ...)` convenience method since it
-  enforces the recommended "render first" ordering.
 
+- Render and capture do not need to arrive in lockstep.
+- Nodes run when their scheduling policy says their dependencies are satisfied.
+- `Runtime::try_pull` returns a shared `PacketHandle<T>` so one upstream packet can fan out cheaply.
 
-Feature status / roadmap
-------------------------
+Scheduling and async arrival
+----------------------------
 
-| Feature | Status | Notes |
-|---|:---:|---|
-| AEC3 core pipeline (render analysis + capture processing) | ✅ | `crate::audio_processing::aec3` |
-| VoIP wrapper (`VoipAec3`) | ✅ | `crate::voip::VoipAec3` |
-| 10 ms frame contract + validation | ✅ | checks render/capture frame sizes |
-| Input sample rates 16–48 kHz | ✅ | inclusive, with special handling for 44.1 kHz |
-| 44.1 kHz input support | ✅ | internally resampled to 48 kHz for the AEC core |
-| Mixed render/capture sample rates | ✅ | render and capture can differ |
-| Delay estimation + render/capture alignment | ✅ | built into the pipeline |
-| Multi-band split/merge filterbanks + FFT analysis | ✅ | part of the AEC3 pipeline |
-| Optional capture high-pass filter | ✅ | enabled by default |
-| Metrics (ERL / ERLE / estimated delay) | ✅ | available via `metrics()` / return value |
-| Diagnostics dumping | ✅ | available through the optional `diagnostics` feature |
-| Optional linear AEC output path in wrapper | ✅ | used internally for NS analysis when configured |
-| Noise suppression (standalone NS) | ✅ | available in `crate::audio_processing::ns` and integrated in wrapper |
-| Automatic gain control (AGC) | ✅ | available in `crate::audio_processing::agc2` |
-| Noise suppression 2 (NS2) | Planned | soon, utilizing rnnoise-based models for improved suppression quality |
+Built-in nodes use two scheduling styles:
 
-Notes and integration tips
---------------------------
-- Frame shape: the wrapper expects interleaved f32 frames sized as
--  `frame_samples_per_channel * channels`. `capture_frame_samples()` and
-  `render_frame_samples()` return the per-channel length for 10 ms frames.
-- Supported input sample rates are gated to 16–48 kHz. If you need other rates,
-  resample before feeding frames to the wrapper.
-- When you have both render and capture frames available at the same time,
-  prefer calling `process(capture, Some(render), ...)` so the pipeline sees
-  render first (consistent with the reference usage order).
+- `SchedulePlan::OnArrival`
+  - run whenever a trigger input receives a packet
+  - used by nodes like AEC3 where render updates internal state independently of capture output
+- `SchedulePlan::AlignOn`
+  - run only when a trigger packet can be matched with dependency packets under a `MatchPolicy`
+  - used for side-input patterns such as optional analysis audio
+
+`PacketMeta` carries optional timestamps:
+
+```rust
+use aec3::graph::{PacketMeta, Timestamp};
+
+let meta = PacketMeta {
+    timestamp: Some(Timestamp {
+        clock: 0,
+        start: 48_000,
+        duration: 480,
+    }),
+    sequence: 7,
+    discontinuity: false,
+};
+```
+
+Alignment rules only compare packets on the same clock. Cross-clock joins need
+an explicit adaptation node. When timestamps are absent, `AlignOn` falls back
+to FIFO/latest queue behavior instead of erroring.
+
+Custom nodes
+------------
+
+You can insert your own nodes anywhere in the graph by implementing:
+
+- `NodeSpec` to register typed ports and return handles
+- `NodeFactory` to build runtime state
+- `NodeRunner` to consume inputs and emit outputs from `ProcessCtx`
+
+That keeps the graph core generic while letting node implementations own their
+own state, readiness rules, and processing logic.
+
+Node lifecycle control
+----------------------
+
+The runtime exposes per-node control states:
+
+- `Active`: process normally
+- `Bypassed`: pass through the primary audio path when the node supports it
+- `Suspended`: freeze/drop work without changing topology
+
+Built-in nodes also implement `reset()` through `Runtime::reset_node(...)`, and
+the linear pipeline wrapper exposes convenience helpers like `reset_aec3()`.
+
+Built-in node patterns
+----------------------
+
+- Capture-only processing: `source -> agc2 / hpf / ns -> sink`
+- Duplex echo cancellation: `capture + render -> aec3 -> sink`
+- Side-channel analysis: `aec3.linear_out -> ns.analysis_in`
+- Common voice chain: `pipelines::linear::builder(render, capture)`
+- Explicit format adaptation: insert `nodes::resample`
+- Fan-out: insert `nodes::tap` or connect one output to multiple downstream ports
+
 
 Examples
 --------
-- `examples/karaoke_loopback.rs` — captures system loopback (render reference) +
-  microphone and runs AEC in a processing thread.
-- `examples/karaoke_loopback_delayed.rs` — simulates speaker-path latency by
-  delaying **capture** frames and draining render frames separately. This is the
-  recommended reference for integrating AEC when render/capture are asynchronous.
+
+- `examples/karaoke_loopback.rs`: live loopback + microphone processing with `pipelines::linear`
+- `examples/karaoke_loopback_delayed.rs`: same setup with an intentionally delayed capture path
 
 Contributing
 ------------
-PRs welcome. Follow standard Rust contribution practices: ensure `cargo test`
-passes and run `cargo fmt` before submitting.
 
-Community projects
-------------------
-There are a few community-maintained projects that integrate with or wrap this
-crate. For example:
-
-- aec3-py — a community Python wrapper for this crate: https://github.com/RustedBytes/aec3-py (outdated at the moment, so I suggest forking and updating if you want to use it)
-
-If you maintain a project that uses or wraps `aec3`, please open a PR to add it
-here so others can find it easily.
+PRs welcome. Run `cargo fmt` and `cargo test` before submitting changes.
 
 License
 -------
+
 This repository is a port of code aligned with WebRTC reference algorithms.
 Adopt and/or license in accordance with your needs and the original project
 policy.

@@ -449,7 +449,7 @@ impl Default for Filter {
             },
             config_change_duration_blocks: 250,
             initial_state_seconds: 2.5,
-            shadow_reset_hangover_blocks: 0,
+            shadow_reset_hangover_blocks: 25,
             use_shadow_reset_hangover: true,
             conservative_initial_phase: false,
             enable_shadow_filter_output_usage: true,
@@ -675,8 +675,8 @@ impl Default for Suppressor {
             high_bands_suppression: HighBandsSuppression {
                 enr_threshold: 1.0,
                 max_gain_during_echo: 1.0,
-                anti_howling_activation_threshold: 25.0,
-                anti_howling_gain: 0.01,
+                anti_howling_activation_threshold: 400.0,
+                anti_howling_gain: 1.0,
             },
             floor_first_increase: 0.00001,
         }
