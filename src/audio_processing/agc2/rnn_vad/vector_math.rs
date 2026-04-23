@@ -145,12 +145,12 @@ unsafe fn dot_product_sse2_impl(x: &[f32], y: &[f32]) -> f32 {
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{
-    float32x2_t, float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32,
+    float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32,
     vld1q_f32, vmulq_f32, vpadd_f32, vst1_f32,
 };
 #[cfg(target_arch = "arm")]
 use std::arch::arm::{
-    float32x2_t, float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32,
+    float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32,
     vld1q_f32, vmulq_f32, vpadd_f32, vst1_f32,
 };
 

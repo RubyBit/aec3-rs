@@ -207,10 +207,10 @@ unsafe fn sqrt_sse2_impl(x: &mut [f32]) {
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{
-    vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vsqrtq_f32, vst1q_f32,
+    vaddq_f32, vld1q_f32, vmulq_f32, vsqrtq_f32, vst1q_f32,
 };
 #[cfg(target_arch = "arm")]
-use std::arch::arm::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
+use std::arch::arm::{vaddq_f32, vld1q_f32, vmulq_f32, vst1q_f32};
 
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]

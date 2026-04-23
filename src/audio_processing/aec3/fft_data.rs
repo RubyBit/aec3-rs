@@ -1,6 +1,5 @@
 use super::aec3_common::{
-    Aec3Optimization, FFT_LENGTH, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1, detect_avx2,
-    detect_sse2,
+    Aec3Optimization, FFT_LENGTH, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1
 };
 
 /// Holds the positive-frequency bins (including DC and Nyquist) for a
@@ -57,22 +56,28 @@ impl FftData {
 
     fn spectrum_avx2(&self, power_spectrum: &mut [f32]) {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if detect_avx2() {
-            unsafe {
-                self.spectrum_avx2_impl(power_spectrum);
+        {
+            use super::aec3_common::detect_avx2;
+            if detect_avx2() {
+                unsafe {
+                    self.spectrum_avx2_impl(power_spectrum);
+                }
+                return;
             }
-            return;
         }
         self.spectrum_scalar(power_spectrum);
     }
 
     fn spectrum_sse2(&self, power_spectrum: &mut [f32]) {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if detect_sse2() {
-            unsafe {
-                self.spectrum_sse2_impl(power_spectrum);
+        {
+            use super::aec3_common::detect_sse2;
+            if detect_sse2() {
+                unsafe {
+                    self.spectrum_sse2_impl(power_spectrum);
+                }
+                return;
             }
-            return;
         }
         self.spectrum_scalar(power_spectrum);
     }
