@@ -11,5 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added SIMD optimizations to aec3 core modules such as adaptive_fir_filter/erl and generic SIMD optimized vector math modules (utilized in the RNN vad in agc2 and in aec3 cng, supression filter and supression gain modules).
 
-### TODO: Add past versions as well and also go back and tag releases to reference here
+###### TODO: Add past versions as well and also go back and tag releases to reference here
 
+[unreleased]: https://github.com/RubyBit/aec3-rs/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/RubyBit/aec3-rs/compare/v0.1.7...v0.1.8
