@@ -5,6 +5,7 @@ use std::fmt;
 pub enum Aec3Optimization {
     None,
     Sse2,
+    Avx2,
     Neon,
 }
 
@@ -84,13 +85,16 @@ pub fn log2_to_db(in_log2: f32) -> f32 {
 }
 
 pub fn detect_optimization() -> Aec3Optimization {
+    let has_avx2 = detect_avx2();
     let has_sse2 = detect_sse2();
     let has_neon = detect_neon();
-    resolve_optimization(has_sse2, has_neon)
+    resolve_optimization(has_avx2, has_sse2, has_neon)
 }
 
-fn resolve_optimization(has_sse2: bool, has_neon: bool) -> Aec3Optimization {
-    if has_sse2 {
+fn resolve_optimization(has_avx2: bool, has_sse2: bool, has_neon: bool) -> Aec3Optimization {
+    if has_avx2 {
+        Aec3Optimization::Avx2
+    } else if has_sse2 {
         Aec3Optimization::Sse2
     } else if has_neon {
         Aec3Optimization::Neon
@@ -100,27 +104,37 @@ fn resolve_optimization(has_sse2: bool, has_neon: bool) -> Aec3Optimization {
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-fn detect_sse2() -> bool {
+pub(crate) fn detect_avx2() -> bool {
+    std::arch::is_x86_feature_detected!("avx2")
+}
+
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+pub(crate) fn detect_avx2() -> bool {
+    false
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub(crate) fn detect_sse2() -> bool {
     std::arch::is_x86_feature_detected!("sse2")
 }
 
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn detect_sse2() -> bool {
+pub(crate) fn detect_sse2() -> bool {
     false
 }
 
 #[cfg(target_arch = "aarch64")]
-fn detect_neon() -> bool {
+pub(crate) fn detect_neon() -> bool {
     std::arch::is_aarch64_feature_detected!("neon")
 }
 
 #[cfg(target_arch = "arm")]
-fn detect_neon() -> bool {
+pub(crate) fn detect_neon() -> bool {
     std::arch::is_arm_feature_detected!("neon")
 }
 
 #[cfg(not(any(target_arch = "arm", target_arch = "aarch64")))]
-fn detect_neon() -> bool {
+pub(crate) fn detect_neon() -> bool {
     false
 }
 
@@ -129,6 +143,7 @@ impl fmt::Display for Aec3Optimization {
         let label = match self {
             Aec3Optimization::None => "none",
             Aec3Optimization::Sse2 => "sse2",
+            Aec3Optimization::Avx2 => "avx2",
             Aec3Optimization::Neon => "neon",
         };
         f.write_str(label)
@@ -213,16 +228,24 @@ mod tests {
     #[test]
     fn optimization_resolution_prefers_sse2_over_neon() {
         assert_eq!(
+            Aec3Optimization::Avx2,
+            super::resolve_optimization(true, true, true)
+        );
+        assert_eq!(
+            Aec3Optimization::Avx2,
+            super::resolve_optimization(true, false, true)
+        );
+        assert_eq!(
             Aec3Optimization::Sse2,
-            super::resolve_optimization(true, true)
+            super::resolve_optimization(false, true, true)
         );
         assert_eq!(
             Aec3Optimization::Neon,
-            super::resolve_optimization(false, true)
+            super::resolve_optimization(false, false, true)
         );
         assert_eq!(
             Aec3Optimization::None,
-            super::resolve_optimization(false, false)
+            super::resolve_optimization(false, false, false)
         );
     }
 }

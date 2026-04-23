@@ -2,6 +2,27 @@ use crate::audio_processing::aec3::aec3_common::{Aec3Optimization, BLOCK_SIZE};
 use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
 use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 use std::cmp::Ordering;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
+#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+use crate::audio_processing::aec3::aec3_common::detect_neon;
+
+#[cfg(target_arch = "x86")]
+use std::arch::x86::{
+    _mm_add_ps, _mm_loadu_ps, _mm_mul_ps, _mm_set1_ps, _mm_setzero_ps, _mm_storeu_ps,
+    _mm256_add_ps, _mm256_loadu_ps, _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps,
+    _mm256_storeu_ps,
+};
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::{
+    _mm_add_ps, _mm_loadu_ps, _mm_mul_ps, _mm_set1_ps, _mm_setzero_ps, _mm_storeu_ps,
+    _mm256_add_ps, _mm256_loadu_ps, _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps,
+    _mm256_storeu_ps,
+};
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
+#[cfg(target_arch = "arm")]
+use std::arch::arm::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
 
 const SATURATION_LIMIT: f32 = 32_000.0;
 
@@ -111,16 +132,38 @@ impl MatchedFilter {
             start %= buffer_size;
 
             let result = match self.optimization {
-                Aec3Optimization::Sse2 | Aec3Optimization::Neon | Aec3Optimization::None => {
-                    matched_filter_core(
-                        start,
-                        x2_sum_threshold,
-                        self.smoothing,
-                        render_samples,
-                        capture,
-                        filter,
-                    )
-                }
+                Aec3Optimization::Avx2 => matched_filter_core_avx2(
+                    start,
+                    x2_sum_threshold,
+                    self.smoothing,
+                    render_samples,
+                    capture,
+                    filter,
+                ),
+                Aec3Optimization::Sse2 => matched_filter_core_sse2(
+                    start,
+                    x2_sum_threshold,
+                    self.smoothing,
+                    render_samples,
+                    capture,
+                    filter,
+                ),
+                Aec3Optimization::Neon => matched_filter_core_neon(
+                    start,
+                    x2_sum_threshold,
+                    self.smoothing,
+                    render_samples,
+                    capture,
+                    filter,
+                ),
+                Aec3Optimization::None => matched_filter_core(
+                    start,
+                    x2_sum_threshold,
+                    self.smoothing,
+                    render_samples,
+                    capture,
+                    filter,
+                ),
             };
 
             let peak_index = Self::detect_peak(filter);
@@ -262,6 +305,339 @@ fn matched_filter_core(
     }
 }
 
+fn matched_filter_core_avx2(
+    x_start_index: usize,
+    x2_sum_threshold: f32,
+    smoothing: f32,
+    x: &[f32],
+    y: &[f32],
+    h: &mut [f32],
+) -> MatchedFilterCoreResult {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if detect_avx2() {
+        unsafe {
+            return matched_filter_core_avx2_impl(
+                x_start_index,
+                x2_sum_threshold,
+                smoothing,
+                x,
+                y,
+                h,
+            );
+        }
+    }
+    matched_filter_core(x_start_index, x2_sum_threshold, smoothing, x, y, h)
+}
+
+fn matched_filter_core_sse2(
+    x_start_index: usize,
+    x2_sum_threshold: f32,
+    smoothing: f32,
+    x: &[f32],
+    y: &[f32],
+    h: &mut [f32],
+) -> MatchedFilterCoreResult {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if detect_sse2() {
+        unsafe {
+            return matched_filter_core_sse2_impl(
+                x_start_index,
+                x2_sum_threshold,
+                smoothing,
+                x,
+                y,
+                h,
+            );
+        }
+    }
+    matched_filter_core(x_start_index, x2_sum_threshold, smoothing, x, y, h)
+}
+
+fn matched_filter_core_neon(
+    x_start_index: usize,
+    x2_sum_threshold: f32,
+    smoothing: f32,
+    x: &[f32],
+    y: &[f32],
+    h: &mut [f32],
+) -> MatchedFilterCoreResult {
+    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    if detect_neon() {
+        unsafe {
+            return matched_filter_core_neon_impl(
+                x_start_index,
+                x2_sum_threshold,
+                smoothing,
+                x,
+                y,
+                h,
+            );
+        }
+    }
+    matched_filter_core(x_start_index, x2_sum_threshold, smoothing, x, y, h)
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "avx2")]
+unsafe fn matched_filter_core_avx2_impl(
+    mut x_start_index: usize,
+    x2_sum_threshold: f32,
+    smoothing: f32,
+    x: &[f32],
+    y: &[f32],
+    h: &mut [f32],
+) -> MatchedFilterCoreResult {
+    let mut filters_updated = false;
+    let mut error_sum = 0.0f32;
+    let x_size = x.len();
+    let h_size = h.len();
+
+    for &y_sample in y {
+        let chunk1 = h_size.min(x_size - x_start_index);
+        let chunk2 = h_size - chunk1;
+        let mut x_ptr = x[x_start_index..].as_ptr();
+        let mut h_ptr = h.as_ptr();
+        let mut x2_sum_vec = _mm256_setzero_ps();
+        let mut s_vec = _mm256_setzero_ps();
+        let mut x2_sum = 0.0f32;
+        let mut s = 0.0f32;
+
+        for limit in [chunk1, chunk2] {
+            let vector_limit = limit & !7;
+            let mut processed = 0usize;
+            while processed < vector_limit {
+                let x_k = _mm256_loadu_ps(x_ptr.add(processed));
+                let h_k = _mm256_loadu_ps(h_ptr.add(processed));
+                x2_sum_vec = _mm256_add_ps(x2_sum_vec, _mm256_mul_ps(x_k, x_k));
+                s_vec = _mm256_add_ps(s_vec, _mm256_mul_ps(h_k, x_k));
+                processed += 8;
+            }
+            while processed < limit {
+                let x_k = *x_ptr.add(processed);
+                x2_sum += x_k * x_k;
+                s += *h_ptr.add(processed) * x_k;
+                processed += 1;
+            }
+            x_ptr = x.as_ptr();
+            h_ptr = h_ptr.add(limit);
+        }
+
+        let mut vec_sum = [0.0f32; 8];
+        _mm256_storeu_ps(vec_sum.as_mut_ptr(), x2_sum_vec);
+        x2_sum += vec_sum.iter().sum::<f32>();
+        _mm256_storeu_ps(vec_sum.as_mut_ptr(), s_vec);
+        s += vec_sum.iter().sum::<f32>();
+
+        let error = y_sample - s;
+        let saturation = y_sample >= SATURATION_LIMIT || y_sample <= -SATURATION_LIMIT;
+        error_sum += error * error;
+
+        if x2_sum > x2_sum_threshold && !saturation {
+            let alpha = smoothing * error / x2_sum;
+            let alpha_vec = _mm256_set1_ps(alpha);
+            let mut x_ptr = x[x_start_index..].as_ptr();
+            let mut h_ptr = h.as_mut_ptr();
+            for limit in [chunk1, chunk2] {
+                let vector_limit = limit & !7;
+                let mut processed = 0usize;
+                while processed < vector_limit {
+                    let h_k = _mm256_loadu_ps(h_ptr.add(processed));
+                    let x_k = _mm256_loadu_ps(x_ptr.add(processed));
+                    let update = _mm256_add_ps(h_k, _mm256_mul_ps(alpha_vec, x_k));
+                    _mm256_storeu_ps(h_ptr.add(processed), update);
+                    processed += 8;
+                }
+                while processed < limit {
+                    *h_ptr.add(processed) += alpha * *x_ptr.add(processed);
+                    processed += 1;
+                }
+                x_ptr = x.as_ptr();
+                h_ptr = h_ptr.add(limit);
+            }
+            filters_updated = true;
+        }
+
+        x_start_index = if x_start_index > 0 { x_start_index - 1 } else { x_size - 1 };
+    }
+
+    MatchedFilterCoreResult { filters_updated, error_sum }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "sse2")]
+unsafe fn matched_filter_core_sse2_impl(
+    mut x_start_index: usize,
+    x2_sum_threshold: f32,
+    smoothing: f32,
+    x: &[f32],
+    y: &[f32],
+    h: &mut [f32],
+) -> MatchedFilterCoreResult {
+    let mut filters_updated = false;
+    let mut error_sum = 0.0f32;
+    let x_size = x.len();
+    let h_size = h.len();
+
+    for &y_sample in y {
+        let chunk1 = h_size.min(x_size - x_start_index);
+        let chunk2 = h_size - chunk1;
+        let mut x_ptr = x[x_start_index..].as_ptr();
+        let mut h_ptr = h.as_ptr();
+        let mut x2_sum_vec = _mm_setzero_ps();
+        let mut s_vec = _mm_setzero_ps();
+        let mut x2_sum = 0.0f32;
+        let mut s = 0.0f32;
+
+        for limit in [chunk1, chunk2] {
+            let vector_limit = limit & !3;
+            let mut processed = 0usize;
+            while processed < vector_limit {
+                let x_k = _mm_loadu_ps(x_ptr.add(processed));
+                let h_k = _mm_loadu_ps(h_ptr.add(processed));
+                x2_sum_vec = _mm_add_ps(x2_sum_vec, _mm_mul_ps(x_k, x_k));
+                s_vec = _mm_add_ps(s_vec, _mm_mul_ps(h_k, x_k));
+                processed += 4;
+            }
+            while processed < limit {
+                let x_k = *x_ptr.add(processed);
+                x2_sum += x_k * x_k;
+                s += *h_ptr.add(processed) * x_k;
+                processed += 1;
+            }
+            x_ptr = x.as_ptr();
+            h_ptr = h_ptr.add(limit);
+        }
+
+        let mut vec_sum = [0.0f32; 4];
+        _mm_storeu_ps(vec_sum.as_mut_ptr(), x2_sum_vec);
+        x2_sum += vec_sum.iter().sum::<f32>();
+        _mm_storeu_ps(vec_sum.as_mut_ptr(), s_vec);
+        s += vec_sum.iter().sum::<f32>();
+
+        let error = y_sample - s;
+        let saturation = y_sample >= SATURATION_LIMIT || y_sample <= -SATURATION_LIMIT;
+        error_sum += error * error;
+
+        if x2_sum > x2_sum_threshold && !saturation {
+            let alpha = smoothing * error / x2_sum;
+            let alpha_vec = _mm_set1_ps(alpha);
+            let mut x_ptr = x[x_start_index..].as_ptr();
+            let mut h_ptr = h.as_mut_ptr();
+            for limit in [chunk1, chunk2] {
+                let vector_limit = limit & !3;
+                let mut processed = 0usize;
+                while processed < vector_limit {
+                    let h_k = _mm_loadu_ps(h_ptr.add(processed));
+                    let x_k = _mm_loadu_ps(x_ptr.add(processed));
+                    let update = _mm_add_ps(h_k, _mm_mul_ps(alpha_vec, x_k));
+                    _mm_storeu_ps(h_ptr.add(processed), update);
+                    processed += 4;
+                }
+                while processed < limit {
+                    *h_ptr.add(processed) += alpha * *x_ptr.add(processed);
+                    processed += 1;
+                }
+                x_ptr = x.as_ptr();
+                h_ptr = h_ptr.add(limit);
+            }
+            filters_updated = true;
+        }
+
+        x_start_index = if x_start_index > 0 { x_start_index - 1 } else { x_size - 1 };
+    }
+
+    MatchedFilterCoreResult { filters_updated, error_sum }
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "neon")]
+unsafe fn matched_filter_core_neon_impl(
+    mut x_start_index: usize,
+    x2_sum_threshold: f32,
+    smoothing: f32,
+    x: &[f32],
+    y: &[f32],
+    h: &mut [f32],
+) -> MatchedFilterCoreResult {
+    let mut filters_updated = false;
+    let mut error_sum = 0.0f32;
+    let x_size = x.len();
+    let h_size = h.len();
+
+    for &y_sample in y {
+        let chunk1 = h_size.min(x_size - x_start_index);
+        let chunk2 = h_size - chunk1;
+        let mut x_ptr = x[x_start_index..].as_ptr();
+        let mut h_ptr = h.as_ptr();
+        let mut x2_sum_vec = vdupq_n_f32(0.0);
+        let mut s_vec = vdupq_n_f32(0.0);
+        let mut x2_sum = 0.0f32;
+        let mut s = 0.0f32;
+
+        for limit in [chunk1, chunk2] {
+            let vector_limit = limit & !3;
+            let mut processed = 0usize;
+            while processed < vector_limit {
+                let x_k = vld1q_f32(x_ptr.add(processed));
+                let h_k = vld1q_f32(h_ptr.add(processed));
+                x2_sum_vec = vaddq_f32(x2_sum_vec, vmulq_f32(x_k, x_k));
+                s_vec = vaddq_f32(s_vec, vmulq_f32(h_k, x_k));
+                processed += 4;
+            }
+            while processed < limit {
+                let x_k = *x_ptr.add(processed);
+                x2_sum += x_k * x_k;
+                s += *h_ptr.add(processed) * x_k;
+                processed += 1;
+            }
+            x_ptr = x.as_ptr();
+            h_ptr = h_ptr.add(limit);
+        }
+
+        let mut vec_sum = [0.0f32; 4];
+        vst1q_f32(vec_sum.as_mut_ptr(), x2_sum_vec);
+        x2_sum += vec_sum.iter().sum::<f32>();
+        vst1q_f32(vec_sum.as_mut_ptr(), s_vec);
+        s += vec_sum.iter().sum::<f32>();
+
+        let error = y_sample - s;
+        let saturation = y_sample >= SATURATION_LIMIT || y_sample <= -SATURATION_LIMIT;
+        error_sum += error * error;
+
+        if x2_sum > x2_sum_threshold && !saturation {
+            let alpha = smoothing * error / x2_sum;
+            let alpha_vec = vdupq_n_f32(alpha);
+            let mut x_ptr = x[x_start_index..].as_ptr();
+            let mut h_ptr = h.as_mut_ptr();
+            for limit in [chunk1, chunk2] {
+                let vector_limit = limit & !3;
+                let mut processed = 0usize;
+                while processed < vector_limit {
+                    let h_k = vld1q_f32(h_ptr.add(processed));
+                    let x_k = vld1q_f32(x_ptr.add(processed));
+                    let update = vaddq_f32(h_k, vmulq_f32(alpha_vec, x_k));
+                    vst1q_f32(h_ptr.add(processed), update);
+                    processed += 4;
+                }
+                while processed < limit {
+                    *h_ptr.add(processed) += alpha * *x_ptr.add(processed);
+                    processed += 1;
+                }
+                x_ptr = x.as_ptr();
+                h_ptr = h_ptr.add(limit);
+            }
+            filters_updated = true;
+        }
+
+        x_start_index = if x_start_index > 0 { x_start_index - 1 } else { x_size - 1 };
+    }
+
+    MatchedFilterCoreResult { filters_updated, error_sum }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +686,89 @@ mod tests {
         for i in 0..sub_block_size {
             let idx = (size + block_start + delay - i) % size;
             capture[i] = signal[idx];
+        }
+    }
+
+    fn assert_slice_close(actual: &[f32], expected: &[f32], tolerance: f32) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (&lhs, &rhs)) in actual.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (lhs - rhs).abs() <= tolerance,
+                "mismatch at index {index}: got {lhs}, expected {rhs}"
+            );
+        }
+    }
+
+    #[test]
+    fn matched_filter_core_matches_scalar_across_optimizations() {
+        let x = (0..192)
+            .map(|i| ((i as f32 * 0.17).sin() * 48.0) + ((i as f32 * 0.11).cos() * 12.0))
+            .collect::<Vec<_>>();
+        let y = (0..24)
+            .map(|i| ((i as f32 * 0.29).cos() * 20.0) + 5.0)
+            .collect::<Vec<_>>();
+        let initial_h = (0..48)
+            .map(|i| ((i as f32 * 0.07).sin() * 0.05) - 0.02)
+            .collect::<Vec<_>>();
+        let x_start_index = x.len() - 9;
+        let x2_sum_threshold = 100.0;
+        let smoothing = 0.2;
+
+        let mut expected_h = initial_h.clone();
+        let expected = matched_filter_core(
+            x_start_index,
+            x2_sum_threshold,
+            smoothing,
+            &x,
+            &y,
+            &mut expected_h,
+        );
+
+        for optimization in [
+            Aec3Optimization::Sse2,
+            Aec3Optimization::Avx2,
+            Aec3Optimization::Neon,
+        ] {
+            let mut actual_h = initial_h.clone();
+            let actual = match optimization {
+                Aec3Optimization::Sse2 => matched_filter_core_sse2(
+                    x_start_index,
+                    x2_sum_threshold,
+                    smoothing,
+                    &x,
+                    &y,
+                    &mut actual_h,
+                ),
+                Aec3Optimization::Avx2 => matched_filter_core_avx2(
+                    x_start_index,
+                    x2_sum_threshold,
+                    smoothing,
+                    &x,
+                    &y,
+                    &mut actual_h,
+                ),
+                Aec3Optimization::Neon => matched_filter_core_neon(
+                    x_start_index,
+                    x2_sum_threshold,
+                    smoothing,
+                    &x,
+                    &y,
+                    &mut actual_h,
+                ),
+                Aec3Optimization::None => unreachable!(),
+            };
+
+            assert_eq!(
+                expected.filters_updated, actual.filters_updated,
+                "update flag mismatch for {optimization:?}"
+            );
+            assert!(
+                (expected.error_sum - actual.error_sum).abs() <= 1e-2,
+                "error sum mismatch for {optimization:?}: got {}, expected {}",
+                actual.error_sum,
+                expected.error_sum
+            );
+            assert_slice_close(&actual_h, &expected_h, 1e-4);
         }
     }
 

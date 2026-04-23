@@ -4,6 +4,7 @@ use crate::audio_processing::aec3::aec3_common::{
 };
 use crate::audio_processing::aec3::aec3_fft::Aec3Fft;
 use crate::audio_processing::aec3::fft_data::FftData;
+use crate::audio_processing::aec3::vector_math::VectorMath;
 
 pub struct SuppressionFilter {
     #[allow(dead_code)]
@@ -65,11 +66,14 @@ impl SuppressionFilter {
             }
         }
 
-        let mut noise_gain = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
-        for (dst, &g) in noise_gain.iter_mut().zip(suppression_gain.iter()) {
-            let value = (1.0 - g * g).max(0.0);
-            *dst = value.sqrt();
+        let vector_math = VectorMath::new(self.optimization);
+        let mut suppression_gain_sq = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
+        let mut noise_gain = [1.0f32; FFT_LENGTH_BY_2_PLUS_1];
+        vector_math.multiply(suppression_gain, suppression_gain, &mut suppression_gain_sq);
+        for (dst, &value) in noise_gain.iter_mut().zip(suppression_gain_sq.iter()) {
+            *dst = (1.0 - value).max(0.0);
         }
+        vector_math.sqrt(&mut noise_gain);
         let high_bands_noise_scaling =
             0.4f32 * (1.0 - high_bands_gain * high_bands_gain).max(0.0).sqrt();
         const IFFT_NORM: f32 = 2.0 / FFT_LENGTH as f32;
@@ -77,12 +81,18 @@ impl SuppressionFilter {
         for ch in 0..self.num_capture_channels {
             let mut spectrum = FftData::default();
             spectrum.assign(&e_lowest_band[ch]);
-            for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
-                spectrum.re[k] *= suppression_gain[k];
-                spectrum.im[k] *= suppression_gain[k];
-                spectrum.re[k] += noise_gain[k] * comfort_noise[ch].re[k];
-                spectrum.im[k] += noise_gain[k] * comfort_noise[ch].im[k];
-            }
+            let mut suppressed_re = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
+            let mut suppressed_im = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
+            let mut comfort_re = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
+            let mut comfort_im = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
+            vector_math.multiply(&spectrum.re, suppression_gain, &mut suppressed_re);
+            vector_math.multiply(&spectrum.im, suppression_gain, &mut suppressed_im);
+            vector_math.multiply(&noise_gain, &comfort_noise[ch].re, &mut comfort_re);
+            vector_math.multiply(&noise_gain, &comfort_noise[ch].im, &mut comfort_im);
+            spectrum.re.copy_from_slice(&suppressed_re);
+            spectrum.im.copy_from_slice(&suppressed_im);
+            vector_math.accumulate(&comfort_re, &mut spectrum.re);
+            vector_math.accumulate(&comfort_im, &mut spectrum.im);
 
             let mut e_extended = [0.0f32; FFT_LENGTH];
             self.fft.ifft(&spectrum, &mut e_extended);

@@ -5,6 +5,29 @@ use crate::audio_processing::aec3::aec3_fft::Aec3Fft;
 use crate::audio_processing::aec3::fft_data::FftData;
 use crate::audio_processing::aec3::render_buffer::RenderBuffer;
 use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
+#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+use crate::audio_processing::aec3::aec3_common::detect_neon;
+
+#[cfg(target_arch = "x86")]
+use std::arch::x86::{
+    _mm_add_ps, _mm_loadu_ps, _mm_max_ps, _mm_mul_ps, _mm_storeu_ps, _mm_sub_ps, _mm256_add_ps,
+    _mm256_loadu_ps, _mm256_max_ps, _mm256_mul_ps, _mm256_storeu_ps, _mm256_sub_ps,
+};
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::{
+    _mm_add_ps, _mm_loadu_ps, _mm_max_ps, _mm_mul_ps, _mm_storeu_ps, _mm_sub_ps, _mm256_add_ps,
+    _mm256_loadu_ps, _mm256_max_ps, _mm256_mul_ps, _mm256_storeu_ps, _mm256_sub_ps,
+};
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{
+    vaddq_f32, vld1q_f32, vmaxq_f32, vmlaq_f32, vmlsq_f32, vmulq_f32, vst1q_f32,
+};
+#[cfg(target_arch = "arm")]
+use std::arch::arm::{
+    vaddq_f32, vld1q_f32, vmaxq_f32, vmlaq_f32, vmlsq_f32, vmulq_f32, vst1q_f32,
+};
 
 /// Computes and stores the frequency response of the filter.
 pub fn compute_frequency_response(
@@ -37,6 +60,51 @@ pub fn compute_frequency_response(
     }
 }
 
+fn compute_frequency_response_avx2(
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    h2: &mut Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if detect_avx2() {
+        unsafe {
+            compute_frequency_response_avx2_impl(num_partitions, h, h2);
+        }
+        return;
+    }
+    compute_frequency_response(num_partitions, h, h2);
+}
+
+fn compute_frequency_response_sse2(
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    h2: &mut Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if detect_sse2() {
+        unsafe {
+            compute_frequency_response_sse2_impl(num_partitions, h, h2);
+        }
+        return;
+    }
+    compute_frequency_response(num_partitions, h, h2);
+}
+
+fn compute_frequency_response_neon(
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    h2: &mut Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+) {
+    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    if detect_neon() {
+        unsafe {
+            compute_frequency_response_neon_impl(num_partitions, h, h2);
+        }
+        return;
+    }
+    compute_frequency_response(num_partitions, h, h2);
+}
+
 /// Adapts the filter partitions as H(t+1)=H(t)+G(t)*conj(X(t)).
 pub fn adapt_partitions(
     render_buffer: &RenderBuffer,
@@ -65,6 +133,54 @@ pub fn adapt_partitions(
         }
         index = if index + 1 < len { index + 1 } else { 0 };
     }
+}
+
+fn adapt_partitions_avx2(
+    render_buffer: &RenderBuffer,
+    g: &FftData,
+    num_partitions: usize,
+    h: &mut [Vec<FftData>],
+) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if detect_avx2() {
+        unsafe {
+            adapt_partitions_avx2_impl(render_buffer, g, num_partitions, h);
+        }
+        return;
+    }
+    adapt_partitions(render_buffer, g, num_partitions, h);
+}
+
+fn adapt_partitions_sse2(
+    render_buffer: &RenderBuffer,
+    g: &FftData,
+    num_partitions: usize,
+    h: &mut [Vec<FftData>],
+) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if detect_sse2() {
+        unsafe {
+            adapt_partitions_sse2_impl(render_buffer, g, num_partitions, h);
+        }
+        return;
+    }
+    adapt_partitions(render_buffer, g, num_partitions, h);
+}
+
+fn adapt_partitions_neon(
+    render_buffer: &RenderBuffer,
+    g: &FftData,
+    num_partitions: usize,
+    h: &mut [Vec<FftData>],
+) {
+    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    if detect_neon() {
+        unsafe {
+            adapt_partitions_neon_impl(render_buffer, g, num_partitions, h);
+        }
+        return;
+    }
+    adapt_partitions(render_buffer, g, num_partitions, h);
 }
 
 /// Produces the filter output from the current partitions.
@@ -97,6 +213,516 @@ pub fn apply_filter(
             }
         }
         index = if index + 1 < len { index + 1 } else { 0 };
+    }
+}
+
+fn apply_filter_avx2(
+    render_buffer: &RenderBuffer,
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    s: &mut FftData,
+) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if detect_avx2() {
+        unsafe {
+            apply_filter_avx2_impl(render_buffer, num_partitions, h, s);
+        }
+        return;
+    }
+    apply_filter(render_buffer, num_partitions, h, s);
+}
+
+fn apply_filter_sse2(
+    render_buffer: &RenderBuffer,
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    s: &mut FftData,
+) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if detect_sse2() {
+        unsafe {
+            apply_filter_sse2_impl(render_buffer, num_partitions, h, s);
+        }
+        return;
+    }
+    apply_filter(render_buffer, num_partitions, h, s);
+}
+
+fn apply_filter_neon(
+    render_buffer: &RenderBuffer,
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    s: &mut FftData,
+) {
+    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    if detect_neon() {
+        unsafe {
+            apply_filter_neon_impl(render_buffer, num_partitions, h, s);
+        }
+        return;
+    }
+    apply_filter(render_buffer, num_partitions, h, s);
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "avx2")]
+unsafe fn compute_frequency_response_avx2_impl(
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    h2: &mut Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+) {
+    assert!(num_partitions <= h.len());
+    if h2.len() < num_partitions {
+        h2.resize(num_partitions, [0.0; FFT_LENGTH_BY_2_PLUS_1]);
+    }
+    for response in h2.iter_mut().take(num_partitions) {
+        response.fill(0.0);
+    }
+    if num_partitions == 0 {
+        return;
+    }
+    let num_render_channels = h[0].len();
+    for p in 0..num_partitions {
+        for ch in 0..num_render_channels {
+            let h_p_ch = &h[p][ch];
+            let h2_p = &mut h2[p];
+            let mut j = 0usize;
+            while j < FFT_LENGTH_BY_2 {
+                let re = _mm256_loadu_ps(h_p_ch.re.as_ptr().add(j));
+                let im = _mm256_loadu_ps(h_p_ch.im.as_ptr().add(j));
+                let magnitude = _mm256_add_ps(_mm256_mul_ps(re, re), _mm256_mul_ps(im, im));
+                let current = _mm256_loadu_ps(h2_p.as_ptr().add(j));
+                _mm256_storeu_ps(h2_p.as_mut_ptr().add(j), _mm256_max_ps(current, magnitude));
+                j += 8;
+            }
+            let nyquist = h_p_ch.re[FFT_LENGTH_BY_2] * h_p_ch.re[FFT_LENGTH_BY_2]
+                + h_p_ch.im[FFT_LENGTH_BY_2] * h_p_ch.im[FFT_LENGTH_BY_2];
+            h2_p[FFT_LENGTH_BY_2] = h2_p[FFT_LENGTH_BY_2].max(nyquist);
+        }
+    }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "sse2")]
+unsafe fn compute_frequency_response_sse2_impl(
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    h2: &mut Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+) {
+    assert!(num_partitions <= h.len());
+    if h2.len() < num_partitions {
+        h2.resize(num_partitions, [0.0; FFT_LENGTH_BY_2_PLUS_1]);
+    }
+    for response in h2.iter_mut().take(num_partitions) {
+        response.fill(0.0);
+    }
+    if num_partitions == 0 {
+        return;
+    }
+    let num_render_channels = h[0].len();
+    for p in 0..num_partitions {
+        for ch in 0..num_render_channels {
+            let h_p_ch = &h[p][ch];
+            let h2_p = &mut h2[p];
+            let mut j = 0usize;
+            while j < FFT_LENGTH_BY_2 {
+                let re = _mm_loadu_ps(h_p_ch.re.as_ptr().add(j));
+                let im = _mm_loadu_ps(h_p_ch.im.as_ptr().add(j));
+                let magnitude = _mm_add_ps(_mm_mul_ps(re, re), _mm_mul_ps(im, im));
+                let current = _mm_loadu_ps(h2_p.as_ptr().add(j));
+                _mm_storeu_ps(h2_p.as_mut_ptr().add(j), _mm_max_ps(current, magnitude));
+                j += 4;
+            }
+            let nyquist = h_p_ch.re[FFT_LENGTH_BY_2] * h_p_ch.re[FFT_LENGTH_BY_2]
+                + h_p_ch.im[FFT_LENGTH_BY_2] * h_p_ch.im[FFT_LENGTH_BY_2];
+            h2_p[FFT_LENGTH_BY_2] = h2_p[FFT_LENGTH_BY_2].max(nyquist);
+        }
+    }
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "neon")]
+unsafe fn compute_frequency_response_neon_impl(
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    h2: &mut Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+) {
+    assert!(num_partitions <= h.len());
+    if h2.len() < num_partitions {
+        h2.resize(num_partitions, [0.0; FFT_LENGTH_BY_2_PLUS_1]);
+    }
+    for response in h2.iter_mut().take(num_partitions) {
+        response.fill(0.0);
+    }
+    if num_partitions == 0 {
+        return;
+    }
+    let num_render_channels = h[0].len();
+    for p in 0..num_partitions {
+        for ch in 0..num_render_channels {
+            let h_p_ch = &h[p][ch];
+            let h2_p = &mut h2[p];
+            let mut j = 0usize;
+            while j < FFT_LENGTH_BY_2 {
+                let re = vld1q_f32(h_p_ch.re.as_ptr().add(j));
+                let im = vld1q_f32(h_p_ch.im.as_ptr().add(j));
+                let magnitude = vmlaq_f32(vmulq_f32(re, re), im, im);
+                let current = vld1q_f32(h2_p.as_ptr().add(j));
+                vst1q_f32(h2_p.as_mut_ptr().add(j), vmaxq_f32(current, magnitude));
+                j += 4;
+            }
+            let nyquist = h_p_ch.re[FFT_LENGTH_BY_2] * h_p_ch.re[FFT_LENGTH_BY_2]
+                + h_p_ch.im[FFT_LENGTH_BY_2] * h_p_ch.im[FFT_LENGTH_BY_2];
+            h2_p[FFT_LENGTH_BY_2] = h2_p[FFT_LENGTH_BY_2].max(nyquist);
+        }
+    }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "avx2")]
+unsafe fn adapt_partitions_avx2_impl(
+    render_buffer: &RenderBuffer,
+    g: &FftData,
+    num_partitions: usize,
+    h: &mut [Vec<FftData>],
+) {
+    let render_fft = render_buffer.fft_buffer();
+    let num_render_channels = render_fft[0].len();
+    let limit_1 = (render_fft.len() - render_buffer.position()).min(num_partitions);
+    let limit_2 = num_partitions;
+    let mut x_partition = render_buffer.position();
+    let mut limit = limit_1;
+    let mut p = 0usize;
+    loop {
+        while p < limit {
+            for ch in 0..num_render_channels {
+                let x = &render_fft[x_partition][ch];
+                let h_entry = &mut h[p][ch];
+                let mut k = 0usize;
+                while k < FFT_LENGTH_BY_2 {
+                    let g_re = _mm256_loadu_ps(g.re.as_ptr().add(k));
+                    let g_im = _mm256_loadu_ps(g.im.as_ptr().add(k));
+                    let x_re = _mm256_loadu_ps(x.re.as_ptr().add(k));
+                    let x_im = _mm256_loadu_ps(x.im.as_ptr().add(k));
+                    let h_re = _mm256_loadu_ps(h_entry.re.as_ptr().add(k));
+                    let h_im = _mm256_loadu_ps(h_entry.im.as_ptr().add(k));
+                    let new_re = _mm256_add_ps(
+                        h_re,
+                        _mm256_add_ps(_mm256_mul_ps(x_re, g_re), _mm256_mul_ps(x_im, g_im)),
+                    );
+                    let new_im = _mm256_add_ps(
+                        h_im,
+                        _mm256_sub_ps(_mm256_mul_ps(x_re, g_im), _mm256_mul_ps(x_im, g_re)),
+                    );
+                    _mm256_storeu_ps(h_entry.re.as_mut_ptr().add(k), new_re);
+                    _mm256_storeu_ps(h_entry.im.as_mut_ptr().add(k), new_im);
+                    k += 8;
+                }
+                h_entry.re[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * g.re[FFT_LENGTH_BY_2]
+                    + x.im[FFT_LENGTH_BY_2] * g.im[FFT_LENGTH_BY_2];
+                h_entry.im[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * g.im[FFT_LENGTH_BY_2]
+                    - x.im[FFT_LENGTH_BY_2] * g.re[FFT_LENGTH_BY_2];
+            }
+            p += 1;
+            x_partition += 1;
+        }
+        if p >= limit_2 {
+            break;
+        }
+        x_partition = 0;
+        limit = limit_2;
+    }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "sse2")]
+unsafe fn adapt_partitions_sse2_impl(
+    render_buffer: &RenderBuffer,
+    g: &FftData,
+    num_partitions: usize,
+    h: &mut [Vec<FftData>],
+) {
+    let render_fft = render_buffer.fft_buffer();
+    let num_render_channels = render_fft[0].len();
+    let limit_1 = (render_fft.len() - render_buffer.position()).min(num_partitions);
+    let limit_2 = num_partitions;
+    let mut x_partition = render_buffer.position();
+    let mut limit = limit_1;
+    let mut p = 0usize;
+    loop {
+        while p < limit {
+            for ch in 0..num_render_channels {
+                let x = &render_fft[x_partition][ch];
+                let h_entry = &mut h[p][ch];
+                let mut k = 0usize;
+                while k < FFT_LENGTH_BY_2 {
+                    let g_re = _mm_loadu_ps(g.re.as_ptr().add(k));
+                    let g_im = _mm_loadu_ps(g.im.as_ptr().add(k));
+                    let x_re = _mm_loadu_ps(x.re.as_ptr().add(k));
+                    let x_im = _mm_loadu_ps(x.im.as_ptr().add(k));
+                    let h_re = _mm_loadu_ps(h_entry.re.as_ptr().add(k));
+                    let h_im = _mm_loadu_ps(h_entry.im.as_ptr().add(k));
+                    let new_re = _mm_add_ps(
+                        h_re,
+                        _mm_add_ps(_mm_mul_ps(x_re, g_re), _mm_mul_ps(x_im, g_im)),
+                    );
+                    let new_im = _mm_add_ps(
+                        h_im,
+                        _mm_sub_ps(_mm_mul_ps(x_re, g_im), _mm_mul_ps(x_im, g_re)),
+                    );
+                    _mm_storeu_ps(h_entry.re.as_mut_ptr().add(k), new_re);
+                    _mm_storeu_ps(h_entry.im.as_mut_ptr().add(k), new_im);
+                    k += 4;
+                }
+                h_entry.re[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * g.re[FFT_LENGTH_BY_2]
+                    + x.im[FFT_LENGTH_BY_2] * g.im[FFT_LENGTH_BY_2];
+                h_entry.im[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * g.im[FFT_LENGTH_BY_2]
+                    - x.im[FFT_LENGTH_BY_2] * g.re[FFT_LENGTH_BY_2];
+            }
+            p += 1;
+            x_partition += 1;
+        }
+        if p >= limit_2 {
+            break;
+        }
+        x_partition = 0;
+        limit = limit_2;
+    }
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "neon")]
+unsafe fn adapt_partitions_neon_impl(
+    render_buffer: &RenderBuffer,
+    g: &FftData,
+    num_partitions: usize,
+    h: &mut [Vec<FftData>],
+) {
+    let render_fft = render_buffer.fft_buffer();
+    let num_render_channels = render_fft[0].len();
+    let limit_1 = (render_fft.len() - render_buffer.position()).min(num_partitions);
+    let limit_2 = num_partitions;
+    let mut x_partition = render_buffer.position();
+    let mut limit = limit_1;
+    let mut p = 0usize;
+    loop {
+        while p < limit {
+            for ch in 0..num_render_channels {
+                let x = &render_fft[x_partition][ch];
+                let h_entry = &mut h[p][ch];
+                let mut k = 0usize;
+                while k < FFT_LENGTH_BY_2 {
+                    let g_re = vld1q_f32(g.re.as_ptr().add(k));
+                    let g_im = vld1q_f32(g.im.as_ptr().add(k));
+                    let x_re = vld1q_f32(x.re.as_ptr().add(k));
+                    let x_im = vld1q_f32(x.im.as_ptr().add(k));
+                    let h_re = vld1q_f32(h_entry.re.as_ptr().add(k));
+                    let h_im = vld1q_f32(h_entry.im.as_ptr().add(k));
+                    let new_re = vaddq_f32(h_re, vmlaq_f32(vmulq_f32(x_re, g_re), x_im, g_im));
+                    let new_im = vaddq_f32(h_im, vmlsq_f32(vmulq_f32(x_re, g_im), x_im, g_re));
+                    vst1q_f32(h_entry.re.as_mut_ptr().add(k), new_re);
+                    vst1q_f32(h_entry.im.as_mut_ptr().add(k), new_im);
+                    k += 4;
+                }
+                h_entry.re[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * g.re[FFT_LENGTH_BY_2]
+                    + x.im[FFT_LENGTH_BY_2] * g.im[FFT_LENGTH_BY_2];
+                h_entry.im[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * g.im[FFT_LENGTH_BY_2]
+                    - x.im[FFT_LENGTH_BY_2] * g.re[FFT_LENGTH_BY_2];
+            }
+            p += 1;
+            x_partition += 1;
+        }
+        if p >= limit_2 {
+            break;
+        }
+        x_partition = 0;
+        limit = limit_2;
+    }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "avx2")]
+unsafe fn apply_filter_avx2_impl(
+    render_buffer: &RenderBuffer,
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    s: &mut FftData,
+) {
+    s.re.fill(0.0);
+    s.im.fill(0.0);
+    if num_partitions == 0 {
+        return;
+    }
+    let render_fft = render_buffer.fft_buffer();
+    let num_render_channels = render_fft[0].len();
+    let limit_1 = (render_fft.len() - render_buffer.position()).min(num_partitions);
+    let limit_2 = num_partitions;
+    let mut x_partition = render_buffer.position();
+    let mut limit = limit_1;
+    let mut p = 0usize;
+    loop {
+        while p < limit {
+            for ch in 0..num_render_channels {
+                let x = &render_fft[x_partition][ch];
+                let h_entry = &h[p][ch];
+                let mut k = 0usize;
+                while k < FFT_LENGTH_BY_2 {
+                    let x_re = _mm256_loadu_ps(x.re.as_ptr().add(k));
+                    let x_im = _mm256_loadu_ps(x.im.as_ptr().add(k));
+                    let h_re = _mm256_loadu_ps(h_entry.re.as_ptr().add(k));
+                    let h_im = _mm256_loadu_ps(h_entry.im.as_ptr().add(k));
+                    let s_re = _mm256_loadu_ps(s.re.as_ptr().add(k));
+                    let s_im = _mm256_loadu_ps(s.im.as_ptr().add(k));
+                    let new_re = _mm256_add_ps(
+                        s_re,
+                        _mm256_sub_ps(_mm256_mul_ps(x_re, h_re), _mm256_mul_ps(x_im, h_im)),
+                    );
+                    let new_im = _mm256_add_ps(
+                        s_im,
+                        _mm256_add_ps(_mm256_mul_ps(x_re, h_im), _mm256_mul_ps(x_im, h_re)),
+                    );
+                    _mm256_storeu_ps(s.re.as_mut_ptr().add(k), new_re);
+                    _mm256_storeu_ps(s.im.as_mut_ptr().add(k), new_im);
+                    k += 8;
+                }
+                s.re[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * h_entry.re[FFT_LENGTH_BY_2]
+                    - x.im[FFT_LENGTH_BY_2] * h_entry.im[FFT_LENGTH_BY_2];
+                s.im[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * h_entry.im[FFT_LENGTH_BY_2]
+                    + x.im[FFT_LENGTH_BY_2] * h_entry.re[FFT_LENGTH_BY_2];
+            }
+            p += 1;
+            x_partition += 1;
+        }
+        if p >= limit_2 {
+            break;
+        }
+        x_partition = 0;
+        limit = limit_2;
+    }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "sse2")]
+unsafe fn apply_filter_sse2_impl(
+    render_buffer: &RenderBuffer,
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    s: &mut FftData,
+) {
+    s.re.fill(0.0);
+    s.im.fill(0.0);
+    if num_partitions == 0 {
+        return;
+    }
+    let render_fft = render_buffer.fft_buffer();
+    let num_render_channels = render_fft[0].len();
+    let limit_1 = (render_fft.len() - render_buffer.position()).min(num_partitions);
+    let limit_2 = num_partitions;
+    let mut x_partition = render_buffer.position();
+    let mut limit = limit_1;
+    let mut p = 0usize;
+    loop {
+        while p < limit {
+            for ch in 0..num_render_channels {
+                let x = &render_fft[x_partition][ch];
+                let h_entry = &h[p][ch];
+                let mut k = 0usize;
+                while k < FFT_LENGTH_BY_2 {
+                    let x_re = _mm_loadu_ps(x.re.as_ptr().add(k));
+                    let x_im = _mm_loadu_ps(x.im.as_ptr().add(k));
+                    let h_re = _mm_loadu_ps(h_entry.re.as_ptr().add(k));
+                    let h_im = _mm_loadu_ps(h_entry.im.as_ptr().add(k));
+                    let s_re = _mm_loadu_ps(s.re.as_ptr().add(k));
+                    let s_im = _mm_loadu_ps(s.im.as_ptr().add(k));
+                    let new_re = _mm_add_ps(
+                        s_re,
+                        _mm_sub_ps(_mm_mul_ps(x_re, h_re), _mm_mul_ps(x_im, h_im)),
+                    );
+                    let new_im = _mm_add_ps(
+                        s_im,
+                        _mm_add_ps(_mm_mul_ps(x_re, h_im), _mm_mul_ps(x_im, h_re)),
+                    );
+                    _mm_storeu_ps(s.re.as_mut_ptr().add(k), new_re);
+                    _mm_storeu_ps(s.im.as_mut_ptr().add(k), new_im);
+                    k += 4;
+                }
+                s.re[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * h_entry.re[FFT_LENGTH_BY_2]
+                    - x.im[FFT_LENGTH_BY_2] * h_entry.im[FFT_LENGTH_BY_2];
+                s.im[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * h_entry.im[FFT_LENGTH_BY_2]
+                    + x.im[FFT_LENGTH_BY_2] * h_entry.re[FFT_LENGTH_BY_2];
+            }
+            p += 1;
+            x_partition += 1;
+        }
+        if p >= limit_2 {
+            break;
+        }
+        x_partition = 0;
+        limit = limit_2;
+    }
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[allow(unsafe_op_in_unsafe_fn)]
+#[target_feature(enable = "neon")]
+unsafe fn apply_filter_neon_impl(
+    render_buffer: &RenderBuffer,
+    num_partitions: usize,
+    h: &[Vec<FftData>],
+    s: &mut FftData,
+) {
+    s.re.fill(0.0);
+    s.im.fill(0.0);
+    if num_partitions == 0 {
+        return;
+    }
+    let render_fft = render_buffer.fft_buffer();
+    let num_render_channels = render_fft[0].len();
+    let limit_1 = (render_fft.len() - render_buffer.position()).min(num_partitions);
+    let limit_2 = num_partitions;
+    let mut x_partition = render_buffer.position();
+    let mut limit = limit_1;
+    let mut p = 0usize;
+    loop {
+        while p < limit {
+            for ch in 0..num_render_channels {
+                let x = &render_fft[x_partition][ch];
+                let h_entry = &h[p][ch];
+                let mut k = 0usize;
+                while k < FFT_LENGTH_BY_2 {
+                    let x_re = vld1q_f32(x.re.as_ptr().add(k));
+                    let x_im = vld1q_f32(x.im.as_ptr().add(k));
+                    let h_re = vld1q_f32(h_entry.re.as_ptr().add(k));
+                    let h_im = vld1q_f32(h_entry.im.as_ptr().add(k));
+                    let s_re = vld1q_f32(s.re.as_ptr().add(k));
+                    let s_im = vld1q_f32(s.im.as_ptr().add(k));
+                    let new_re = vaddq_f32(s_re, vmlsq_f32(vmulq_f32(x_re, h_re), x_im, h_im));
+                    let new_im = vaddq_f32(s_im, vmlaq_f32(vmulq_f32(x_re, h_im), x_im, h_re));
+                    vst1q_f32(s.re.as_mut_ptr().add(k), new_re);
+                    vst1q_f32(s.im.as_mut_ptr().add(k), new_im);
+                    k += 4;
+                }
+                s.re[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * h_entry.re[FFT_LENGTH_BY_2]
+                    - x.im[FFT_LENGTH_BY_2] * h_entry.im[FFT_LENGTH_BY_2];
+                s.im[FFT_LENGTH_BY_2] += x.re[FFT_LENGTH_BY_2] * h_entry.im[FFT_LENGTH_BY_2]
+                    + x.im[FFT_LENGTH_BY_2] * h_entry.re[FFT_LENGTH_BY_2];
+            }
+            p += 1;
+            x_partition += 1;
+        }
+        if p >= limit_2 {
+            break;
+        }
+        x_partition = 0;
+        limit = limit_2;
     }
 }
 
@@ -196,9 +822,16 @@ impl AdaptiveFirFilter {
 
     pub fn filter(&self, render_buffer: &RenderBuffer, s: &mut FftData) {
         match self.optimization {
-            Aec3Optimization::Sse2 | Aec3Optimization::Neon | Aec3Optimization::None => {
-                apply_filter(render_buffer, self.current_size_partitions, &self.h, s)
+            Aec3Optimization::Avx2 => {
+                apply_filter_avx2(render_buffer, self.current_size_partitions, &self.h, s)
             }
+            Aec3Optimization::Sse2 => {
+                apply_filter_sse2(render_buffer, self.current_size_partitions, &self.h, s)
+            }
+            Aec3Optimization::Neon => {
+                apply_filter_neon(render_buffer, self.current_size_partitions, &self.h, s)
+            }
+            Aec3Optimization::None => apply_filter(render_buffer, self.current_size_partitions, &self.h, s),
         }
     }
 
@@ -218,7 +851,21 @@ impl AdaptiveFirFilter {
     }
 
     pub fn compute_frequency_response(&self, h2: &mut Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>) {
-        compute_frequency_response(self.current_size_partitions, &self.h, h2);
+        if h2.len() < self.current_size_partitions {
+            h2.resize(self.current_size_partitions, [0.0; FFT_LENGTH_BY_2_PLUS_1]);
+        }
+        match self.optimization {
+            Aec3Optimization::Avx2 => {
+                compute_frequency_response_avx2(self.current_size_partitions, &self.h, h2)
+            }
+            Aec3Optimization::Sse2 => {
+                compute_frequency_response_sse2(self.current_size_partitions, &self.h, h2)
+            }
+            Aec3Optimization::Neon => {
+                compute_frequency_response_neon(self.current_size_partitions, &self.h, h2)
+            }
+            Aec3Optimization::None => compute_frequency_response(self.current_size_partitions, &self.h, h2),
+        }
     }
 
     pub fn scale_filter(&mut self, factor: f32) {
@@ -252,9 +899,16 @@ impl AdaptiveFirFilter {
     fn adapt_and_update_size(&mut self, render_buffer: &RenderBuffer, g: &FftData) {
         self.update_size();
         match self.optimization {
-            Aec3Optimization::Sse2 | Aec3Optimization::Neon | Aec3Optimization::None => {
-                adapt_partitions(render_buffer, g, self.current_size_partitions, &mut self.h)
+            Aec3Optimization::Avx2 => {
+                adapt_partitions_avx2(render_buffer, g, self.current_size_partitions, &mut self.h)
             }
+            Aec3Optimization::Sse2 => {
+                adapt_partitions_sse2(render_buffer, g, self.current_size_partitions, &mut self.h)
+            }
+            Aec3Optimization::Neon => {
+                adapt_partitions_neon(render_buffer, g, self.current_size_partitions, &mut self.h)
+            }
+            Aec3Optimization::None => adapt_partitions(render_buffer, g, self.current_size_partitions, &mut self.h),
         }
     }
 
@@ -377,12 +1031,15 @@ mod tests {
         get_time_domain_length, num_bands_for_rate,
     };
     use crate::audio_processing::aec3::aec3_fft::{Aec3Fft, Window};
+    use crate::audio_processing::aec3::block_buffer::BlockBuffer;
     use crate::audio_processing::aec3::delay_estimate::DelayEstimate;
     use crate::audio_processing::aec3::echo_path_variability::{
         DelayAdjustment, EchoPathVariability,
     };
+    use crate::audio_processing::aec3::fft_buffer::FftBuffer;
     use crate::audio_processing::aec3::render_delay_buffer::RenderDelayBuffer;
     use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
+    use crate::audio_processing::aec3::spectrum_buffer::SpectrumBuffer;
     use crate::audio_processing::aec3::shadow_filter_update_gain::ShadowFilterUpdateGain;
     use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
     use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
@@ -391,6 +1048,30 @@ mod tests {
     };
     use crate::test_support::echo_canceller_test_tools::{DelayBuffer, randomize_sample_vector};
     use crate::test_support::random::Random;
+
+    fn populate_fft_data(data: &mut FftData, seed: f32) {
+        for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
+            data.re[k] = seed + 0.07 * k as f32;
+            data.im[k] = 0.5 * seed - 0.03 * k as f32;
+        }
+    }
+
+    fn assert_fft_data_close(actual: &FftData, expected: &FftData, tolerance: f32) {
+        for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
+            assert!(
+                (actual.re[k] - expected.re[k]).abs() <= tolerance,
+                "real mismatch at bin {k}: got {}, expected {}",
+                actual.re[k],
+                expected.re[k]
+            );
+            assert!(
+                (actual.im[k] - expected.im[k]).abs() <= tolerance,
+                "imag mismatch at bin {k}: got {}, expected {}",
+                actual.im[k],
+                expected.im[k]
+            );
+        }
+    }
 
     #[test]
     fn filter_statistics_access() {
@@ -411,6 +1092,99 @@ mod tests {
             let data_dumper = ApmDataDumper::new(7);
             let filter = AdaptiveFirFilter::new(size, size, 10, 1, optimization, data_dumper);
             assert_eq!(size, filter.size_partitions());
+        }
+    }
+
+    #[test]
+    fn simd_helpers_match_scalar() {
+        const BUFFER_SIZE: usize = 4;
+        const NUM_CHANNELS: usize = 2;
+        const NUM_PARTITIONS: usize = 3;
+
+        let block_buffer = BlockBuffer::new(BUFFER_SIZE, 1, NUM_CHANNELS, BLOCK_SIZE);
+        let mut spectrum_buffer = SpectrumBuffer::new(BUFFER_SIZE, NUM_CHANNELS);
+        let mut fft_buffer = FftBuffer::new(BUFFER_SIZE, NUM_CHANNELS);
+        fft_buffer.read = 2;
+        spectrum_buffer.read = 2;
+        spectrum_buffer.write = fft_buffer.write;
+
+        for slot in 0..BUFFER_SIZE {
+            for ch in 0..NUM_CHANNELS {
+                populate_fft_data(
+                    &mut fft_buffer.buffer[slot][ch],
+                    0.5 + slot as f32 * 0.75 + ch as f32 * 0.2,
+                );
+            }
+        }
+
+        let render_buffer = RenderBuffer::new(&block_buffer, &spectrum_buffer, &fft_buffer, true);
+
+        let mut g = FftData::default();
+        populate_fft_data(&mut g, 1.25);
+
+        let mut initial_h = vec![vec![FftData::default(); NUM_CHANNELS]; NUM_PARTITIONS];
+        for (p, partition) in initial_h.iter_mut().enumerate() {
+            for (ch, entry) in partition.iter_mut().enumerate() {
+                populate_fft_data(entry, 2.0 + p as f32 * 0.5 + ch as f32 * 0.1);
+            }
+        }
+
+        let mut expected_h2 = Vec::new();
+        compute_frequency_response(NUM_PARTITIONS, &initial_h, &mut expected_h2);
+        let mut expected_adapted = initial_h.clone();
+        adapt_partitions(&render_buffer, &g, NUM_PARTITIONS, &mut expected_adapted);
+        let mut expected_filtered = FftData::default();
+        apply_filter(&render_buffer, NUM_PARTITIONS, &initial_h, &mut expected_filtered);
+
+        for optimization in [
+            Aec3Optimization::Sse2,
+            Aec3Optimization::Avx2,
+            Aec3Optimization::Neon,
+        ] {
+            let mut actual_h2 = Vec::new();
+            match optimization {
+                Aec3Optimization::Sse2 => {
+                    compute_frequency_response_sse2(NUM_PARTITIONS, &initial_h, &mut actual_h2)
+                }
+                Aec3Optimization::Avx2 => {
+                    compute_frequency_response_avx2(NUM_PARTITIONS, &initial_h, &mut actual_h2)
+                }
+                Aec3Optimization::Neon => {
+                    compute_frequency_response_neon(NUM_PARTITIONS, &initial_h, &mut actual_h2)
+                }
+                Aec3Optimization::None => unreachable!(),
+            }
+            assert_eq!(expected_h2, actual_h2, "frequency response mismatch for {optimization:?}");
+
+            let mut actual_adapted = initial_h.clone();
+            match optimization {
+                Aec3Optimization::Sse2 => {
+                    adapt_partitions_sse2(&render_buffer, &g, NUM_PARTITIONS, &mut actual_adapted)
+                }
+                Aec3Optimization::Avx2 => {
+                    adapt_partitions_avx2(&render_buffer, &g, NUM_PARTITIONS, &mut actual_adapted)
+                }
+                Aec3Optimization::Neon => {
+                    adapt_partitions_neon(&render_buffer, &g, NUM_PARTITIONS, &mut actual_adapted)
+                }
+                Aec3Optimization::None => unreachable!(),
+            }
+            assert_eq!(expected_adapted, actual_adapted, "adapt mismatch for {optimization:?}");
+
+            let mut actual_filtered = FftData::default();
+            match optimization {
+                Aec3Optimization::Sse2 => {
+                    apply_filter_sse2(&render_buffer, NUM_PARTITIONS, &initial_h, &mut actual_filtered)
+                }
+                Aec3Optimization::Avx2 => {
+                    apply_filter_avx2(&render_buffer, NUM_PARTITIONS, &initial_h, &mut actual_filtered)
+                }
+                Aec3Optimization::Neon => {
+                    apply_filter_neon(&render_buffer, NUM_PARTITIONS, &initial_h, &mut actual_filtered)
+                }
+                Aec3Optimization::None => unreachable!(),
+            }
+            assert_fft_data_close(&actual_filtered, &expected_filtered, 1e-5);
         }
     }
 

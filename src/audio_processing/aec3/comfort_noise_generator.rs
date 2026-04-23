@@ -2,6 +2,7 @@ use crate::audio_processing::aec3::aec3_common::{
     Aec3Optimization, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1,
 };
 use crate::audio_processing::aec3::fft_data::FftData;
+use crate::audio_processing::aec3::vector_math::VectorMath;
 
 const K_SQRT2_SIN: [f32; 32] = [
     0.0000000f32,
@@ -39,17 +40,16 @@ const K_SQRT2_SIN: [f32; 32] = [
 ];
 
 fn generate_comfort_noise(
-    _optimization: Aec3Optimization,
+    optimization: Aec3Optimization,
     n2: &[f32; FFT_LENGTH_BY_2_PLUS_1],
     seed: &mut u32,
     lower_band_noise: &mut FftData,
     upper_band_noise: &mut FftData,
 ) {
-    // Compute sqrt spectrum
+    // Compute sqrt spectrum.
     let mut n = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
-    for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
-        n[k] = n2[k].sqrt();
-    }
+    n.copy_from_slice(n2);
+    VectorMath::new(optimization).sqrt(&mut n);
 
     // Compute high band noise level (average over upper half)
     let k_half = FFT_LENGTH_BY_2_PLUS_1 / 2;

@@ -1,0 +1,149 @@
+name: SIMD Architecture Tests
+
+on:
+  push:
+    paths:
+      - ".github/workflows/simd-arch-tests.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "tests/**"
+  pull_request:
+    paths:
+      - ".github/workflows/simd-arch-tests.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "tests/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64 (SSE2 + AVX2)
+            runner: ubuntu-24.04
+          - name: Linux arm64 (NEON)
+            runner: ubuntu-24.04-arm
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+
+      - name: Cache Cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-
+
+      - name: Install stable Rust
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+          fi
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Show runner CPU information
+        run: |
+          uname -a
+          lscpu
+
+      - name: Verify required SIMD support
+        shell: bash
+        run: |
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          cat <<'RS' > /tmp/verify_simd.rs
+          fn main() {
+              #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+              {
+                  assert!(
+                      std::arch::is_x86_feature_detected!("sse2"),
+                      "GitHub runner is missing sse2 support"
+                  );
+                  assert!(
+                      std::arch::is_x86_feature_detected!("avx2"),
+                      "GitHub runner is missing avx2 support"
+                  );
+                  println!("Detected x86 SIMD support: sse2,avx2");
+                  return;
+              }
+
+              #[cfg(target_arch = "aarch64")]
+              {
+                  assert!(
+                      std::arch::is_aarch64_feature_detected!("neon"),
+                      "GitHub runner is missing neon support"
+                  );
+                  println!("Detected ARM SIMD support: neon");
+                  return;
+              }
+
+              #[cfg(target_arch = "arm")]
+              {
+                  assert!(
+                      std::arch::is_arm_feature_detected!("neon"),
+                      "GitHub runner is missing neon support"
+                  );
+                  println!("Detected ARM SIMD support: neon");
+                  return;
+              }
+
+              panic!("Unsupported runner architecture for SIMD workflow");
+          }
+          RS
+          rustc /tmp/verify_simd.rs -o /tmp/verify_simd
+          /tmp/verify_simd
+
+      - name: Run SIMD-focused tests
+        shell: bash
+        run: |
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          cargo test --locked audio_processing::agc2::rnn_vad::vector_math::tests::test_dot_product -- --nocapture
+          cargo test --locked audio_processing::aec3::vector_math::tests -- --nocapture
+          cargo test --locked audio_processing::aec3::fft_data::tests -- --nocapture
+          cargo test --locked audio_processing::aec3::adaptive_fir_filter_erl::tests -- --nocapture
+          cargo test --locked audio_processing::aec3::adaptive_fir_filter::tests::simd_helpers_match_scalar -- --nocapture
+          cargo test --locked audio_processing::aec3::matched_filter::tests::matched_filter_core_matches_scalar_across_optimizations -- --nocapture
+
+      - name: Run full test suite
+        shell: bash
+        run: |
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          cargo test --locked

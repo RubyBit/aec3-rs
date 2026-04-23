@@ -57,3 +57,4 @@ pub mod subtractor_output;
 pub mod subtractor_output_analyzer;
 pub mod suppression_filter;
 pub mod suppression_gain;
+pub(crate) mod vector_math;

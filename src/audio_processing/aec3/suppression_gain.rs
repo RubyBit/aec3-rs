@@ -8,6 +8,7 @@ use crate::audio_processing::aec3::moving_average::MovingAverage;
 use crate::audio_processing::aec3::nearend_detector::NearendDetector;
 use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
 use crate::audio_processing::aec3::subband_nearend_detector::SubbandNearendDetector;
+use crate::audio_processing::aec3::vector_math::VectorMath;
 use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
 
 pub struct SuppressionGain {
@@ -279,7 +280,7 @@ impl SuppressionGain {
 
         postprocess_gains(gain);
         self.last_gain.copy_from_slice(gain);
-        sqrt_in_place(gain);
+        sqrt_in_place(self.optimization, gain);
     }
 
     fn gain_to_no_audible_echo(
@@ -361,10 +362,11 @@ impl SuppressionGain {
     }
 }
 
-fn sqrt_in_place(values: &mut [f32; FFT_LENGTH_BY_2_PLUS_1]) {
-    for v in values.iter_mut() {
-        *v = v.max(0.0).sqrt();
+fn sqrt_in_place(optimization: Aec3Optimization, values: &mut [f32; FFT_LENGTH_BY_2_PLUS_1]) {
+    for value in values.iter_mut() {
+        *value = value.max(0.0);
     }
+    VectorMath::new(optimization).sqrt(values);
 }
 
 fn weight_echo_for_audibility(
