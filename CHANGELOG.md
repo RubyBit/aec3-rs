@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Matched the full-band ERLE estimator to the WebRTC AEC3 reference by removing
+  the incorrect low-band max cap and using the reference smoothing behavior.
+  This fixes `echo_return_loss_enhancement` being artificially stuck near 6 dB
+  and lets downstream AEC state use the uncapped full-band ERLE estimate.
+
 ### Added
 
 - Introduced a new graph-based pipeline construction system for audio processing.
