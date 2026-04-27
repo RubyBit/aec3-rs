@@ -9,18 +9,17 @@ const CLIPPING_PREDICTOR_MAX_GAIN_CHANGE: i32 = 15;
 
 // Maps input volumes [0,255] to gains in dB (ported from gain_map_internal.h).
 const GAIN_MAP: [i32; 256] = [
-    -56, -54, -52, -50, -48, -47, -45, -43, -42, -40, -38, -37, -35, -34, -33, -31, -30, -29,
-    -27, -26, -25, -24, -23, -22, -20, -19, -18, -17, -16, -15, -14, -14, -13, -12, -11, -10,
-    -9, -8, -8, -7, -6, -5, -5, -4, -3, -2, -2, -1, 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6, 6,
-    7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 15, 16, 16, 17, 17,
-    17, 18, 18, 18, 19, 19, 19, 20, 20, 21, 21, 21, 22, 22, 22, 23, 23, 23, 24, 24, 24, 24, 25,
-    25, 25, 26, 26, 26, 27, 27, 27, 28, 28, 28, 28, 29, 29, 29, 30, 30, 30, 30, 31, 31, 31, 32,
-    32, 32, 32, 33, 33, 33, 33, 34, 34, 34, 35, 35, 35, 35, 36, 36, 36, 36, 37, 37, 37, 38, 38,
-    38, 38, 39, 39, 39, 39, 40, 40, 40, 40, 41, 41, 41, 41, 42, 42, 42, 42, 43, 43, 43, 44, 44,
-    44, 44, 45, 45, 45, 45, 46, 46, 46, 46, 47, 47, 47, 47, 48, 48, 48, 48, 49, 49, 49, 49, 50,
-    50, 50, 50, 51, 51, 51, 51, 52, 52, 52, 52, 53, 53, 53, 53, 54, 54, 54, 54, 55, 55, 55, 55,
-    56, 56, 56, 56, 57, 57, 57, 57, 58, 58, 58, 58, 59, 59, 59, 59, 60, 60, 60, 60, 61, 61, 61,
-    61, 62, 62, 62, 62, 63, 63, 63, 63, 64,
+    -56, -54, -52, -50, -48, -47, -45, -43, -42, -40, -38, -37, -35, -34, -33, -31, -30, -29, -27,
+    -26, -25, -24, -23, -22, -20, -19, -18, -17, -16, -15, -14, -14, -13, -12, -11, -10, -9, -8,
+    -8, -7, -6, -5, -5, -4, -3, -2, -2, -1, 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9,
+    9, 10, 10, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 15, 16, 16, 17, 17, 17, 18, 18, 18, 19,
+    19, 19, 20, 20, 21, 21, 21, 22, 22, 22, 23, 23, 23, 24, 24, 24, 24, 25, 25, 25, 26, 26, 26, 27,
+    27, 27, 28, 28, 28, 28, 29, 29, 29, 30, 30, 30, 30, 31, 31, 31, 32, 32, 32, 32, 33, 33, 33, 33,
+    34, 34, 34, 35, 35, 35, 35, 36, 36, 36, 36, 37, 37, 37, 38, 38, 38, 38, 39, 39, 39, 39, 40, 40,
+    40, 40, 41, 41, 41, 41, 42, 42, 42, 42, 43, 43, 43, 44, 44, 44, 44, 45, 45, 45, 45, 46, 46, 46,
+    46, 47, 47, 47, 47, 48, 48, 48, 48, 49, 49, 49, 49, 50, 50, 50, 50, 51, 51, 51, 51, 52, 52, 52,
+    52, 53, 53, 53, 53, 54, 54, 54, 54, 55, 55, 55, 55, 56, 56, 56, 56, 57, 57, 57, 57, 58, 58, 58,
+    58, 59, 59, 59, 59, 60, 60, 60, 60, 61, 61, 61, 61, 62, 62, 62, 62, 63, 63, 63, 63, 64,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,16 +76,16 @@ pub fn create_clipping_predictor(
     }
 
     match config.mode {
-        ClippingPredictorMode::ClippingEventPrediction => Some(Box::new(
-            ClippingEventPredictor::new(
+        ClippingPredictorMode::ClippingEventPrediction => {
+            Some(Box::new(ClippingEventPredictor::new(
                 num_channels,
                 config.window_length,
                 config.reference_window_length,
                 config.reference_window_delay,
                 config.clipping_threshold,
                 config.crest_factor_margin,
-            ),
-        )),
+            )))
+        }
         ClippingPredictorMode::AdaptiveStepClippingPeakPrediction => {
             Some(Box::new(ClippingPeakPredictor::new(
                 num_channels,
@@ -190,7 +189,8 @@ impl ClippingEventPredictor {
     }
 
     fn predict_clipping_event(&self, channel: i32) -> bool {
-        let metrics = self.ch_buffers[channel as usize].compute_partial_metrics(0, self.window_length);
+        let metrics =
+            self.ch_buffers[channel as usize].compute_partial_metrics(0, self.window_length);
         let Some(metrics) = metrics else {
             return false;
         };
@@ -198,10 +198,8 @@ impl ClippingEventPredictor {
             return false;
         }
 
-        let reference_metrics = self.ch_buffers[channel as usize].compute_partial_metrics(
-            self.reference_window_delay,
-            self.reference_window_length,
-        );
+        let reference_metrics = self.ch_buffers[channel as usize]
+            .compute_partial_metrics(self.reference_window_delay, self.reference_window_length);
         let Some(reference_metrics) = reference_metrics else {
             return false;
         };
@@ -309,12 +307,11 @@ impl ClippingPeakPredictor {
     }
 
     fn estimate_peak_value(&self, channel: i32) -> Option<f32> {
-        let reference_metrics = self.ch_buffers[channel as usize].compute_partial_metrics(
-            self.reference_window_delay,
-            self.reference_window_length,
-        )?;
+        let reference_metrics = self.ch_buffers[channel as usize]
+            .compute_partial_metrics(self.reference_window_delay, self.reference_window_length)?;
 
-        let metrics = self.ch_buffers[channel as usize].compute_partial_metrics(0, self.window_length)?;
+        let metrics =
+            self.ch_buffers[channel as usize].compute_partial_metrics(0, self.window_length)?;
         if float_s16_to_dbfs(metrics.max) <= self.clipping_threshold as f32 {
             return None;
         }
@@ -376,8 +373,8 @@ impl ClippingPredictor for ClippingPeakPredictor {
             let step = if !self.adaptive_step_estimation {
                 default_step
             } else {
-                let estimated_gain_change = (-(estimate_db.ceil() as i32))
-                    .clamp(-CLIPPING_PREDICTOR_MAX_GAIN_CHANGE, 0);
+                let estimated_gain_change =
+                    (-(estimate_db.ceil() as i32)).clamp(-CLIPPING_PREDICTOR_MAX_GAIN_CHANGE, 0);
                 (level
                     - compute_volume_update(
                         estimated_gain_change,
@@ -813,7 +810,8 @@ mod tests {
                     clipping_threshold,
                     crest_factor_margin,
                 };
-                let mut predictor = create_clipping_predictor(NUM_CHANNELS, config).expect("predictor");
+                let mut predictor =
+                    create_clipping_predictor(NUM_CHANNELS, config).expect("predictor");
                 analyze_non_zero_crest_factor_audio(
                     config.reference_window_length,
                     NUM_CHANNELS,
@@ -890,7 +888,12 @@ mod tests {
                 MAX_MIC_LEVEL,
                 predictor.as_ref(),
             );
-            analyze_zero_crest_factor_audio(config.window_length, NUM_CHANNELS, 0.99, predictor.as_mut());
+            analyze_zero_crest_factor_audio(
+                config.window_length,
+                NUM_CHANNELS,
+                0.99,
+                predictor.as_mut(),
+            );
             check_channel_estimates_without_value(
                 NUM_CHANNELS,
                 255,
@@ -932,9 +935,13 @@ mod tests {
                 MAX_MIC_LEVEL,
                 predictor.as_ref(),
             );
-            analyze_zero_crest_factor_audio(config.window_length, NUM_CHANNELS, 0.99, predictor.as_mut());
-            let expected_step = if mode
-                == ClippingPredictorMode::AdaptiveStepClippingPeakPrediction
+            analyze_zero_crest_factor_audio(
+                config.window_length,
+                NUM_CHANNELS,
+                0.99,
+                predictor.as_mut(),
+            );
+            let expected_step = if mode == ClippingPredictorMode::AdaptiveStepClippingPeakPrediction
             {
                 17
             } else {
@@ -979,7 +986,12 @@ mod tests {
             predictor.as_ref(),
         );
         predictor.reset();
-        analyze_zero_crest_factor_audio(config.window_length, NUM_CHANNELS, 0.99, predictor.as_mut());
+        analyze_zero_crest_factor_audio(
+            config.window_length,
+            NUM_CHANNELS,
+            0.99,
+            predictor.as_mut(),
+        );
         check_channel_estimates_without_value(
             NUM_CHANNELS,
             255,
@@ -1017,7 +1029,12 @@ mod tests {
             predictor.as_ref(),
         );
         predictor.reset();
-        analyze_zero_crest_factor_audio(config.window_length, NUM_CHANNELS, 0.99, predictor.as_mut());
+        analyze_zero_crest_factor_audio(
+            config.window_length,
+            NUM_CHANNELS,
+            0.99,
+            predictor.as_mut(),
+        );
         check_channel_estimates_without_value(
             NUM_CHANNELS,
             255,
@@ -1054,7 +1071,12 @@ mod tests {
             MAX_MIC_LEVEL,
             predictor.as_ref(),
         );
-        analyze_zero_crest_factor_audio(config.window_length, NUM_CHANNELS, 0.99, predictor.as_mut());
+        analyze_zero_crest_factor_audio(
+            config.window_length,
+            NUM_CHANNELS,
+            0.99,
+            predictor.as_mut(),
+        );
         check_channel_estimates_with_value(
             NUM_CHANNELS,
             255,
@@ -1092,7 +1114,12 @@ mod tests {
             MAX_MIC_LEVEL,
             predictor.as_ref(),
         );
-        analyze_zero_crest_factor_audio(config.window_length, NUM_CHANNELS, 0.99, predictor.as_mut());
+        analyze_zero_crest_factor_audio(
+            config.window_length,
+            NUM_CHANNELS,
+            0.99,
+            predictor.as_mut(),
+        );
         check_channel_estimates_with_value(
             NUM_CHANNELS,
             255,

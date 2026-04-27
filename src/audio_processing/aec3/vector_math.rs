@@ -1,8 +1,8 @@
 use crate::audio_processing::aec3::aec3_common::Aec3Optimization;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
 #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
 use crate::audio_processing::aec3::aec3_common::detect_neon;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct VectorMath {
@@ -206,9 +206,7 @@ unsafe fn sqrt_sse2_impl(x: &mut [f32]) {
 }
 
 #[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::{
-    vaddq_f32, vld1q_f32, vmulq_f32, vsqrtq_f32, vst1q_f32,
-};
+use std::arch::aarch64::{vaddq_f32, vld1q_f32, vmulq_f32, vsqrtq_f32, vst1q_f32};
 #[cfg(target_arch = "arm")]
 use std::arch::arm::{vaddq_f32, vld1q_f32, vmulq_f32, vst1q_f32};
 
@@ -259,7 +257,10 @@ unsafe fn multiply_sse2_impl(x: &[f32], y: &[f32], z: &mut [f32]) {
     let vector_limit = x.len() & !3;
     let mut j = 0usize;
     while j < vector_limit {
-        let z_j = _mm_mul_ps(_mm_loadu_ps(x.as_ptr().add(j)), _mm_loadu_ps(y.as_ptr().add(j)));
+        let z_j = _mm_mul_ps(
+            _mm_loadu_ps(x.as_ptr().add(j)),
+            _mm_loadu_ps(y.as_ptr().add(j)),
+        );
         _mm_storeu_ps(z.as_mut_ptr().add(j), z_j);
         j += 4;
     }
@@ -304,7 +305,10 @@ unsafe fn accumulate_sse2_impl(x: &[f32], z: &mut [f32]) {
     let vector_limit = x.len() & !3;
     let mut j = 0usize;
     while j < vector_limit {
-        let z_j = _mm_add_ps(_mm_loadu_ps(z.as_ptr().add(j)), _mm_loadu_ps(x.as_ptr().add(j)));
+        let z_j = _mm_add_ps(
+            _mm_loadu_ps(z.as_ptr().add(j)),
+            _mm_loadu_ps(x.as_ptr().add(j)),
+        );
         _mm_storeu_ps(z.as_mut_ptr().add(j), z_j);
         j += 4;
     }

@@ -160,7 +160,10 @@ mod tests {
     fn pitch_buffer_auto_correlation_within_tolerance_fixture() {
         let test_data = PitchTestData::new();
         let mut pitch_buf_decimated = [0.0f32; BUF_SIZE_12_KHZ];
-        decimate_2x(test_data.pitch_buffer_24khz_view(), &mut pitch_buf_decimated);
+        decimate_2x(
+            test_data.pitch_buffer_24khz_view(),
+            &mut pitch_buf_decimated,
+        );
 
         let mut computed_output = [0.0f32; NUM_LAGS_12_KHZ];
         let mut auto_corr_calculator = AutoCorrelationCalculator::new();

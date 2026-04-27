@@ -100,11 +100,7 @@ pub fn compute_and_post_process_lpc_coefficients(
 
 /// Computes the LP residual for input frame `x` and LPC coefficients
 /// `lpc_coeffs`. Supports in-place operation (`x` and `y` may share storage).
-pub fn compute_lp_residual(
-    lpc_coeffs: &[f32; NUM_LPC_COEFFICIENTS],
-    x: &[f32],
-    y: &mut [f32],
-) {
+pub fn compute_lp_residual(lpc_coeffs: &[f32; NUM_LPC_COEFFICIENTS], x: &[f32], y: &mut [f32]) {
     assert!(x.len() > NUM_LPC_COEFFICIENTS);
     assert_eq!(x.len(), y.len());
 
@@ -132,8 +128,8 @@ pub fn compute_lp_residual(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_processing::agc2::rnn_vad::common::FRAME_SIZE_10_MS_24_KHZ;
     use crate::audio_processing::agc2::rnn_vad::common::BUF_SIZE_24_KHZ;
+    use crate::audio_processing::agc2::rnn_vad::common::FRAME_SIZE_10_MS_24_KHZ;
     use crate::audio_processing::agc2::rnn_vad::test_data::{
         FLOAT_MIN, create_lp_residual_and_pitch_info_reader, create_pitch_buffer_24khz_reader,
         expect_near_absolute,
@@ -188,8 +184,14 @@ mod tests {
         let mut expected_lp_and_pitch = vec![0.0f32; BUF_SIZE_24_KHZ + 2];
 
         for i in 0..num_frames {
-            assert!(pitch_buffer_reader.read_chunk(&mut pitch_buffer_24khz), "frame={i}");
-            assert!(lp_pitch_reader.read_chunk(&mut expected_lp_and_pitch), "frame={i}");
+            assert!(
+                pitch_buffer_reader.read_chunk(&mut pitch_buffer_24khz),
+                "frame={i}"
+            );
+            assert!(
+                lp_pitch_reader.read_chunk(&mut expected_lp_and_pitch),
+                "frame={i}"
+            );
 
             if i % 20 == 0 {
                 compute_and_post_process_lpc_coefficients(&pitch_buffer_24khz, &mut lpc);

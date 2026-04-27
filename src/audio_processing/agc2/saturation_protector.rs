@@ -30,7 +30,10 @@ struct SaturationProtectorState {
     time_since_push_ms: i32,
 }
 
-fn reset_saturation_protector_state(initial_headroom_db: f32, state: &mut SaturationProtectorState) {
+fn reset_saturation_protector_state(
+    initial_headroom_db: f32,
+    state: &mut SaturationProtectorState,
+) {
     state.headroom_db = initial_headroom_db;
     state.peak_delay_buffer.reset();
     state.max_peaks_dbfs = MIN_LEVEL_DBFS;
@@ -52,7 +55,10 @@ fn update_saturation_protector_state(
     }
 
     // Update headroom comparing estimated speech level and delayed max speech peak.
-    let delayed_peak_dbfs = state.peak_delay_buffer.front().unwrap_or(state.max_peaks_dbfs);
+    let delayed_peak_dbfs = state
+        .peak_delay_buffer
+        .front()
+        .unwrap_or(state.max_peaks_dbfs);
     let difference_db = delayed_peak_dbfs - speech_level_dbfs;
     if difference_db > state.headroom_db {
         // Attack.
@@ -184,10 +190,8 @@ mod tests {
 
     #[test]
     fn reset() {
-        let mut saturation_protector = create_saturation_protector(
-            INITIAL_HEADROOM_DB,
-            NO_ADJACENT_SPEECH_FRAMES_REQUIRED,
-        );
+        let mut saturation_protector =
+            create_saturation_protector(INITIAL_HEADROOM_DB, NO_ADJACENT_SPEECH_FRAMES_REQUIRED);
         let initial_headroom_db = saturation_protector.headroom_db();
         run_on_constant_level(
             10,
@@ -209,10 +213,8 @@ mod tests {
         const SPEECH_LEVEL_DBFS: f32 = PEAK_LEVEL_DBFS - CREST_FACTOR_DB;
         let max_difference_db = 0.5 * (INITIAL_HEADROOM_DB - CREST_FACTOR_DB).abs();
 
-        let mut saturation_protector = create_saturation_protector(
-            INITIAL_HEADROOM_DB,
-            NO_ADJACENT_SPEECH_FRAMES_REQUIRED,
-        );
+        let mut saturation_protector =
+            create_saturation_protector(INITIAL_HEADROOM_DB, NO_ADJACENT_SPEECH_FRAMES_REQUIRED);
         run_on_constant_level(
             NUM_ITERATIONS,
             MAX_SPEECH_PROBABILITY,
@@ -220,9 +222,7 @@ mod tests {
             SPEECH_LEVEL_DBFS,
             saturation_protector.as_mut(),
         );
-        assert!(
-            (saturation_protector.headroom_db() - CREST_FACTOR_DB).abs() <= max_difference_db
-        );
+        assert!((saturation_protector.headroom_db() - CREST_FACTOR_DB).abs() <= max_difference_db);
     }
 
     #[test]
@@ -234,10 +234,8 @@ mod tests {
         const SPEECH_LEVEL_DBFS: f32 = PEAK_LEVEL_DBFS - CREST_FACTOR_DB;
         const OTHER_SPEECH_LEVEL_DBFS: f32 = PEAK_LEVEL_DBFS - OTHER_CREST_FACTOR_DB;
 
-        let mut saturation_protector = create_saturation_protector(
-            INITIAL_HEADROOM_DB,
-            NO_ADJACENT_SPEECH_FRAMES_REQUIRED,
-        );
+        let mut saturation_protector =
+            create_saturation_protector(INITIAL_HEADROOM_DB, NO_ADJACENT_SPEECH_FRAMES_REQUIRED);
 
         let mut max_difference_db = run_on_constant_level(
             NUM_ITERATIONS,
@@ -256,18 +254,15 @@ mod tests {
 
         const MAX_CHANGE_SPEED_DB_PER_SECOND: f32 = 0.5; // 1 dB / 2 seconds.
         assert!(
-            max_difference_db
-                <= MAX_CHANGE_SPEED_DB_PER_SECOND / 1000.0 * FRAME_DURATION_MS as f32
+            max_difference_db <= MAX_CHANGE_SPEED_DB_PER_SECOND / 1000.0 * FRAME_DURATION_MS as f32
         );
     }
 
     #[test]
     fn do_not_adapt_to_short_speech_segments() {
         for adjacent_speech_frames_threshold in [2, 9, 17] {
-            let mut saturation_protector = create_saturation_protector(
-                INITIAL_HEADROOM_DB,
-                adjacent_speech_frames_threshold,
-            );
+            let mut saturation_protector =
+                create_saturation_protector(INITIAL_HEADROOM_DB, adjacent_speech_frames_threshold);
             let initial_headroom_db = saturation_protector.headroom_db();
             run_on_constant_level(
                 adjacent_speech_frames_threshold - 1,
@@ -283,10 +278,8 @@ mod tests {
     #[test]
     fn adapt_to_enough_speech_segments() {
         for adjacent_speech_frames_threshold in [2, 9, 17] {
-            let mut saturation_protector = create_saturation_protector(
-                INITIAL_HEADROOM_DB,
-                adjacent_speech_frames_threshold,
-            );
+            let mut saturation_protector =
+                create_saturation_protector(INITIAL_HEADROOM_DB, adjacent_speech_frames_threshold);
             let initial_headroom_db = saturation_protector.headroom_db();
             run_on_constant_level(
                 adjacent_speech_frames_threshold + 1,

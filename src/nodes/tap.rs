@@ -96,7 +96,10 @@ impl NodeFactory for TapFactory {
         Ok(())
     }
 
-    fn build(self: Box<Self>, _ctx: &mut crate::graph::BuildCtx) -> GraphResult<Box<dyn NodeRunner>> {
+    fn build(
+        self: Box<Self>,
+        _ctx: &mut crate::graph::BuildCtx,
+    ) -> GraphResult<Box<dyn NodeRunner>> {
         Ok(Box::new(TapRunner {
             audio_in: self.audio_in,
             audio_out: self.audio_out,

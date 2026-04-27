@@ -34,7 +34,8 @@ impl NoiseEstimator {
     }
 
     pub fn prepare_analysis(&mut self) {
-        self.prev_noise_spectrum.copy_from_slice(&self.noise_spectrum);
+        self.prev_noise_spectrum
+            .copy_from_slice(&self.noise_spectrum);
     }
 
     pub fn pre_update(
@@ -63,9 +64,8 @@ impl NoiseEstimator {
             }
 
             const ONE_BY_FFT: f32 = 1.0 / FFT_SIZE_BY_2_PLUS_1 as f32;
-            self.white_noise_level += signal_spectral_sum
-                * ONE_BY_FFT
-                * self.suppression_params.over_subtraction_factor;
+            self.white_noise_level +=
+                signal_spectral_sum * ONE_BY_FFT * self.suppression_params.over_subtraction_factor;
 
             let bins = (FFT_SIZE_BY_2_PLUS_1 - START_BAND) as f32;
             let denom = sum_log_i_square * bins - sum_log_i * sum_log_i;
@@ -82,8 +82,9 @@ impl NoiseEstimator {
             let mut parametric_exp = 0.0;
             let mut parametric_num = 0.0;
             if self.pink_noise_exp > 0.0 {
-                parametric_num =
-                    exp_approximation(self.pink_noise_numerator * one_by_num_analyzed_frames_plus_1);
+                parametric_num = exp_approximation(
+                    self.pink_noise_numerator * one_by_num_analyzed_frames_plus_1,
+                );
                 parametric_num *= num_analyzed_frames as f32 + 1.0;
                 parametric_exp = self.pink_noise_exp * one_by_num_analyzed_frames_plus_1;
             }
@@ -98,12 +99,11 @@ impl NoiseEstimator {
                 };
             }
 
-            const ONE_BY_SHORT_STARTUP_PHASE_BLOCKS: f32 =
-                1.0 / SHORT_STARTUP_PHASE_BLOCKS as f32;
+            const ONE_BY_SHORT_STARTUP_PHASE_BLOCKS: f32 = 1.0 / SHORT_STARTUP_PHASE_BLOCKS as f32;
             for i in 0..FFT_SIZE_BY_2_PLUS_1 {
                 self.noise_spectrum[i] *= num_analyzed_frames as f32;
-                let tmp =
-                    self.parametric_noise_spectrum[i] * (SHORT_STARTUP_PHASE_BLOCKS - num_analyzed_frames) as f32;
+                let tmp = self.parametric_noise_spectrum[i]
+                    * (SHORT_STARTUP_PHASE_BLOCKS - num_analyzed_frames) as f32;
                 self.noise_spectrum[i] += tmp * one_by_num_analyzed_frames_plus_1;
                 self.noise_spectrum[i] *= ONE_BY_SHORT_STARTUP_PHASE_BLOCKS;
             }

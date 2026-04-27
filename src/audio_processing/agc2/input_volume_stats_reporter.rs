@@ -202,7 +202,10 @@ mod tests {
         run_for_both_types(|input_volume_type| {
             let mut stats_reporter = InputVolumeStatsReporter::new(input_volume_type);
             stats_reporter.update_statistics(10);
-            assert_eq!(stats_reporter.histograms().on_volume_change.as_pairs(), vec![]);
+            assert_eq!(
+                stats_reporter.histograms().on_volume_change.as_pairs(),
+                vec![]
+            );
         });
     }
 
@@ -220,9 +223,18 @@ mod tests {
             assert_eq!(stats_reporter.histograms().update_rate.as_pairs(), vec![]);
             assert_eq!(stats_reporter.histograms().decrease_rate.as_pairs(), vec![]);
             assert_eq!(stats_reporter.histograms().increase_rate.as_pairs(), vec![]);
-            assert_eq!(stats_reporter.histograms().update_average.as_pairs(), vec![]);
-            assert_eq!(stats_reporter.histograms().decrease_average.as_pairs(), vec![]);
-            assert_eq!(stats_reporter.histograms().increase_average.as_pairs(), vec![]);
+            assert_eq!(
+                stats_reporter.histograms().update_average.as_pairs(),
+                vec![]
+            );
+            assert_eq!(
+                stats_reporter.histograms().decrease_average.as_pairs(),
+                vec![]
+            );
+            assert_eq!(
+                stats_reporter.histograms().increase_average.as_pairs(),
+                vec![]
+            );
         });
     }
 
@@ -260,7 +272,10 @@ mod tests {
             );
             assert_eq!(
                 stats_reporter.histograms().decrease_rate.as_pairs(),
-                vec![(FRAMES_IN_60_SECONDS / 2 - 1, 1), (FRAMES_IN_60_SECONDS / 2, 1)]
+                vec![
+                    (FRAMES_IN_60_SECONDS / 2 - 1, 1),
+                    (FRAMES_IN_60_SECONDS / 2, 1)
+                ]
             );
             assert_eq!(
                 stats_reporter.histograms().increase_rate.as_pairs(),
@@ -354,9 +369,15 @@ mod tests {
             }
 
             let stats_before_reset = stats_reporter.volume_update_stats();
-            assert_eq!(stats_before_reset.num_decreases, FRAMES_IN_60_SECONDS / 2 - 1);
+            assert_eq!(
+                stats_before_reset.num_decreases,
+                FRAMES_IN_60_SECONDS / 2 - 1
+            );
             assert_eq!(stats_before_reset.sum_decreases, FRAMES_IN_60_SECONDS - 2);
-            assert_eq!(stats_before_reset.num_increases, FRAMES_IN_60_SECONDS / 2 - 1);
+            assert_eq!(
+                stats_before_reset.num_increases,
+                FRAMES_IN_60_SECONDS / 2 - 1
+            );
             assert_eq!(stats_before_reset.sum_increases, FRAMES_IN_60_SECONDS - 2);
 
             stats_reporter.update_statistics(INPUT_VOLUME + 2);

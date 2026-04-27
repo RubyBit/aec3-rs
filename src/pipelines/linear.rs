@@ -3,15 +3,13 @@ use crate::audio_processing::agc2::input_volume_controller::Config as InputVolum
 use crate::audio_processing::gain_controller2::GainController2Config;
 use crate::audio_processing::ns::NsConfig;
 use crate::graph::{
-    GraphBuilder, GraphResult, NodeControlState, NodeId, OutPort, Packet, PacketHandle,
-    PacketMeta, QueueConfig, Runtime, RuntimeOptions, Sink, Source,
+    GraphBuilder, GraphResult, NodeControlState, NodeId, OutPort, Packet, PacketHandle, PacketMeta,
+    QueueConfig, Runtime, RuntimeOptions, Sink, Source,
 };
 use crate::nodes::{
-    aec3,
-    agc2,
+    aec3, agc2,
     audio::{AudioChunk, AudioFormat},
-    hpf,
-    ns,
+    hpf, ns,
 };
 
 #[derive(Debug, Clone)]
@@ -86,10 +84,7 @@ impl LinearPipelineBuilder {
         self
     }
 
-    pub fn input_volume_controller_config(
-        mut self,
-        config: InputVolumeControllerConfig,
-    ) -> Self {
+    pub fn input_volume_controller_config(mut self, config: InputVolumeControllerConfig) -> Self {
         self.input_volume_controller_config = config;
         self
     }
@@ -391,12 +386,7 @@ impl LinearPipeline {
         }
     }
 
-    fn validate_frame(
-        &self,
-        samples: &[f32],
-        format: AudioFormat,
-        kind: &str,
-    ) -> GraphResult<()> {
+    fn validate_frame(&self, samples: &[f32], format: AudioFormat, kind: &str) -> GraphResult<()> {
         if samples.len() != format.sample_count() {
             return Err(crate::graph::GraphError::NodeError(format!(
                 "{} frame expected {} samples for {}, got {}",

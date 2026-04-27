@@ -122,8 +122,11 @@ impl EchoPathDelayEstimator {
         let dumped_delay = aggregated
             .map(|estimate| (estimate.delay * self.down_sampling_factor) as i32)
             .unwrap_or(-1);
-        self.data_dumper
-            .dump_raw_i32(DiagnosticLevel::Production, "aec3_echo_path_delay_estimator_delay", dumped_delay);
+        self.data_dumper.dump_raw_i32(
+            DiagnosticLevel::Production,
+            "aec3_echo_path_delay_estimator_delay",
+            dumped_delay,
+        );
 
         if let Some(estimate) = aggregated.as_mut() {
             estimate.delay *= self.down_sampling_factor;

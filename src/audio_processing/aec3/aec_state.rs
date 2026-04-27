@@ -356,8 +356,11 @@ impl AecState {
             "aec3_erl_time_domain",
             self.erl_time_domain(),
         );
-        self.data_dumper
-            .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_erle", &self.erle()[0]);
+        self.data_dumper.dump_raw_f32_slice(
+            DiagnosticLevel::DeepDebug,
+            "aec3_erle",
+            &self.erle()[0],
+        );
         self.data_dumper.dump_raw_f32(
             DiagnosticLevel::Production,
             "aec3_usable_linear_estimate",

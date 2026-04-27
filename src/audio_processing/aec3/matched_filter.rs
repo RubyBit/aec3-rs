@@ -1,12 +1,16 @@
+#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+use crate::audio_processing::aec3::aec3_common::detect_neon;
 use crate::audio_processing::aec3::aec3_common::{Aec3Optimization, BLOCK_SIZE};
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
 use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
 use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
 use std::cmp::Ordering;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
-use crate::audio_processing::aec3::aec3_common::detect_neon;
 
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
+#[cfg(target_arch = "arm")]
+use std::arch::arm::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
     _mm_add_ps, _mm_loadu_ps, _mm_mul_ps, _mm_set1_ps, _mm_setzero_ps, _mm_storeu_ps,
@@ -19,10 +23,6 @@ use std::arch::x86_64::{
     _mm256_add_ps, _mm256_loadu_ps, _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps,
     _mm256_storeu_ps,
 };
-#[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
 
 const SATURATION_LIMIT: f32 = 32_000.0;
 
@@ -179,12 +179,11 @@ impl MatchedFilter {
                 result.filters_updated,
             );
 
-            self.data_dumper
-                .dump_raw_f32_slice(
-                    DiagnosticLevel::DeepDebug,
-                    &format!("aec3_correlator_{}_h", index),
-                    filter,
-                );
+            self.data_dumper.dump_raw_f32_slice(
+                DiagnosticLevel::DeepDebug,
+                &format!("aec3_correlator_{}_h", index),
+                filter,
+            );
 
             alignment_shift += self.filter_intra_lag_shift;
         }
@@ -458,10 +457,17 @@ unsafe fn matched_filter_core_avx2_impl(
             filters_updated = true;
         }
 
-        x_start_index = if x_start_index > 0 { x_start_index - 1 } else { x_size - 1 };
+        x_start_index = if x_start_index > 0 {
+            x_start_index - 1
+        } else {
+            x_size - 1
+        };
     }
 
-    MatchedFilterCoreResult { filters_updated, error_sum }
+    MatchedFilterCoreResult {
+        filters_updated,
+        error_sum,
+    }
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -545,10 +551,17 @@ unsafe fn matched_filter_core_sse2_impl(
             filters_updated = true;
         }
 
-        x_start_index = if x_start_index > 0 { x_start_index - 1 } else { x_size - 1 };
+        x_start_index = if x_start_index > 0 {
+            x_start_index - 1
+        } else {
+            x_size - 1
+        };
     }
 
-    MatchedFilterCoreResult { filters_updated, error_sum }
+    MatchedFilterCoreResult {
+        filters_updated,
+        error_sum,
+    }
 }
 
 #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
@@ -632,10 +645,17 @@ unsafe fn matched_filter_core_neon_impl(
             filters_updated = true;
         }
 
-        x_start_index = if x_start_index > 0 { x_start_index - 1 } else { x_size - 1 };
+        x_start_index = if x_start_index > 0 {
+            x_start_index - 1
+        } else {
+            x_size - 1
+        };
     }
 
-    MatchedFilterCoreResult { filters_updated, error_sum }
+    MatchedFilterCoreResult {
+        filters_updated,
+        error_sum,
+    }
 }
 
 #[cfg(test)]

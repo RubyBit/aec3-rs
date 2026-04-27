@@ -36,8 +36,9 @@ struct Range {
 
 const PITCH_NEIGHBORHOOD_RADIUS: usize = 2;
 const SUB_HARMONIC_MULTIPLIERS: [i32; 14] = [3, 2, 3, 2, 5, 2, 3, 2, 3, 2, 5, 2, 3, 2];
-const INITIAL_PITCH_PERIOD_THRESHOLDS: [i32; 14] =
-    [20, 45, 80, 125, 180, 245, 320, 405, 500, 605, 720, 845, 980, 1125];
+const INITIAL_PITCH_PERIOD_THRESHOLDS: [i32; 14] = [
+    20, 45, 80, 125, 180, 245, 320, 405, 500, 605, 720, 845, 980, 1125,
+];
 
 const _: () = {
     assert!(SUB_HARMONIC_MULTIPLIERS.len() == INITIAL_PITCH_PERIOD_THRESHOLDS.len());
@@ -472,7 +473,11 @@ mod tests {
     fn compute_sliding_frame_square_energies_constant_signal() {
         let src = [1.0f32; BUF_SIZE_24_KHZ];
         let mut y_energy = [0.0f32; REFINE_NUM_LAGS_24_KHZ];
-        compute_sliding_frame_square_energies_24khz(&src, &mut y_energy, no_available_cpu_features());
+        compute_sliding_frame_square_energies_24khz(
+            &src,
+            &mut y_energy,
+            no_available_cpu_features(),
+        );
 
         let expected = FRAME_SIZE_20_MS_24_KHZ as f32;
         for &v in &y_energy {
@@ -654,10 +659,16 @@ mod tests {
         let cpu = get_available_cpu_features();
         let test_data = PitchTestData::new();
         let mut pitch_buf_decimated = [0.0f32; BUF_SIZE_12_KHZ];
-        decimate_2x(test_data.pitch_buffer_24khz_view(), &mut pitch_buf_decimated);
+        decimate_2x(
+            test_data.pitch_buffer_24khz_view(),
+            &mut pitch_buf_decimated,
+        );
 
-        let pitch_candidates =
-            compute_pitch_period_12khz(&pitch_buf_decimated, test_data.auto_correlation_12khz_view(), cpu);
+        let pitch_candidates = compute_pitch_period_12khz(
+            &pitch_buf_decimated,
+            test_data.auto_correlation_12khz_view(),
+            cpu,
+        );
         assert_eq!(140, pitch_candidates.best);
         assert_eq!(142, pitch_candidates.second_best);
     }
@@ -706,10 +717,7 @@ mod tests {
         let test_pitch_strength_low = 0.35f32;
         let test_pitch_strength_high = 0.75f32;
 
-        let cpu_set = [
-            no_available_cpu_features(),
-            get_available_cpu_features(),
-        ];
+        let cpu_set = [no_available_cpu_features(), get_available_cpu_features()];
         let test_data = PitchTestData::new();
 
         for &cpu in &cpu_set {

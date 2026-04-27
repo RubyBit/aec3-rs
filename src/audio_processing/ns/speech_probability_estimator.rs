@@ -64,16 +64,18 @@ impl SpeechProbabilityEstimator {
         } else {
             WIDTH_PRIOR_0
         };
-        let indicator1 =
-            0.5 * ((width_prior * (prior_model.flatness_threshold - model.spectral_flatness)).tanh() + 1.0);
+        let indicator1 = 0.5
+            * ((width_prior * (prior_model.flatness_threshold - model.spectral_flatness)).tanh()
+                + 1.0);
 
         width_prior = if model.spectral_diff < prior_model.template_diff_threshold {
             WIDTH_PRIOR_1
         } else {
             WIDTH_PRIOR_0
         };
-        let indicator2 =
-            0.5 * ((width_prior * (model.spectral_diff - prior_model.template_diff_threshold)).tanh() + 1.0);
+        let indicator2 = 0.5
+            * ((width_prior * (model.spectral_diff - prior_model.template_diff_threshold)).tanh()
+                + 1.0);
 
         let ind_prior = prior_model.lrt_weighting * indicator0
             + prior_model.flatness_weighting * indicator1

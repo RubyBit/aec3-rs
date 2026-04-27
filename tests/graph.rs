@@ -1,8 +1,7 @@
 use aec3::graph::{
-    BuildCtx, Dependency, GraphBuilder, GraphError, GraphResult, InPort, InputOptions,
-    MatchPolicy, NodeControlState, NodeFactory, NodeIoBuilder, NodeRunner, NodeSpec, OutPort,
-    OutputOptions, Packet, PacketMeta, ProcessCtx, QueueConfig, Runtime, RuntimeOptions,
-    SchedulePlan, Timestamp,
+    BuildCtx, Dependency, GraphBuilder, GraphError, GraphResult, InPort, InputOptions, MatchPolicy,
+    NodeControlState, NodeFactory, NodeIoBuilder, NodeRunner, NodeSpec, OutPort, OutputOptions,
+    Packet, PacketMeta, ProcessCtx, QueueConfig, Runtime, RuntimeOptions, SchedulePlan, Timestamp,
 };
 use aec3::nodes::{
     aec3 as aec3_node, agc2, audio::AudioChunk, audio::AudioFormat, hpf, ns, resample, tap,
@@ -220,7 +219,9 @@ impl NodeRunner for GateRunner {
 fn graph_rejects_cycles() {
     let format = mono_format(16_000);
     let mut graph = GraphBuilder::new();
-    let tap = tap::builder(format).add_to(&mut graph).expect("tap node should build");
+    let tap = tap::builder(format)
+        .add_to(&mut graph)
+        .expect("tap node should build");
     graph
         .connect(tap.audio_out, tap.audio_in)
         .expect("cycle edge should connect before validation");
@@ -256,7 +257,9 @@ fn resample_node_adapts_between_formats() {
     let resample = resample::builder(input_format, output_format)
         .add_to(&mut graph)
         .expect("resample node should build");
-    graph.connect(source, resample.audio_in).expect("source should connect");
+    graph
+        .connect(source, resample.audio_in)
+        .expect("source should connect");
     graph
         .connect(resample.audio_out, sink)
         .expect("resample should connect to sink");
@@ -273,7 +276,10 @@ fn resample_node_adapts_between_formats() {
         .expect("pull should succeed")
         .expect("sink should receive one packet");
     assert_eq!(packet.payload().format, output_format);
-    assert_eq!(packet.payload().samples().len(), output_format.sample_count());
+    assert_eq!(
+        packet.payload().samples().len(),
+        output_format.sample_count()
+    );
 }
 
 #[test]
@@ -301,9 +307,14 @@ fn align_on_waits_for_required_side_input() {
     runtime
         .push(audio_source, audio_packet(format, 1, Some(5), 0.3))
         .expect("audio push should succeed");
-    runtime.run_until_stalled().expect("graph should stall cleanly");
+    runtime
+        .run_until_stalled()
+        .expect("graph should stall cleanly");
     assert!(
-        runtime.try_pull(sink).expect("pull should succeed").is_none(),
+        runtime
+            .try_pull(sink)
+            .expect("pull should succeed")
+            .is_none(),
         "audio should wait until the required side input arrives"
     );
 
@@ -325,10 +336,12 @@ fn align_on_waits_for_required_side_input() {
         )
         .expect("gate push should succeed");
     runtime.run_until_stalled().expect("runtime should drain");
-    assert!(runtime
-        .try_pull(sink)
-        .expect("pull should succeed")
-        .is_some());
+    assert!(
+        runtime
+            .try_pull(sink)
+            .expect("pull should succeed")
+            .is_some()
+    );
 }
 
 #[test]
@@ -356,7 +369,9 @@ fn aec3_pipeline_supports_async_render_capture_and_side_inputs() {
         .add_to(&mut graph)
         .expect("ns node should build");
 
-    graph.connect(mic, custom.input).expect("mic should connect");
+    graph
+        .connect(mic, custom.input)
+        .expect("mic should connect");
     graph
         .connect(custom.output, aec.capture_in)
         .expect("custom node should connect");
@@ -385,7 +400,9 @@ fn aec3_pipeline_supports_async_render_capture_and_side_inputs() {
     runtime
         .push(render, audio_packet(format, 1, Some(10), 0.1))
         .expect("render push should succeed");
-    runtime.run_until_stalled().expect("render path should drain");
+    runtime
+        .run_until_stalled()
+        .expect("render path should drain");
     assert!(
         runtime
             .try_pull(output)
@@ -397,7 +414,9 @@ fn aec3_pipeline_supports_async_render_capture_and_side_inputs() {
     runtime
         .push(mic, audio_packet(format, 2, Some(10), 0.4))
         .expect("capture push should succeed");
-    runtime.run_until_stalled().expect("capture path should drain");
+    runtime
+        .run_until_stalled()
+        .expect("capture path should drain");
 
     let audio = runtime
         .try_pull(output)
@@ -425,7 +444,9 @@ fn capture_only_agc_pipeline_runs_without_render() {
         .add_to(&mut graph)
         .expect("agc node should build");
 
-    graph.connect(audio, agc.audio_in).expect("audio should connect");
+    graph
+        .connect(audio, agc.audio_in)
+        .expect("audio should connect");
     graph
         .connect(
             input_volume,
@@ -454,14 +475,18 @@ fn capture_only_agc_pipeline_runs_without_render() {
             },
         )
         .expect("input volume push should succeed");
-    runtime.run_until_stalled().expect("control path should drain");
+    runtime
+        .run_until_stalled()
+        .expect("control path should drain");
 
     for frame in 0..12 {
         runtime
             .push(audio, audio_packet(format, frame, Some(frame), 0.7))
             .expect("audio push should succeed");
         runtime.run_until_stalled().expect("agc should drain");
-        let _ = runtime.try_pull(audio_out).expect("audio pull should succeed");
+        let _ = runtime
+            .try_pull(audio_out)
+            .expect("audio pull should succeed");
     }
 
     assert!(
@@ -480,9 +505,13 @@ fn tap_node_fans_out_to_multiple_outputs() {
     let source = graph.source::<AudioChunk>("source", QueueConfig::audio_default());
     let sink_a = graph.sink::<AudioChunk>("sink_a", QueueConfig::audio_default());
     let sink_b = graph.sink::<AudioChunk>("sink_b", QueueConfig::audio_default());
-    let tap = tap::builder(format).add_to(&mut graph).expect("tap node should build");
+    let tap = tap::builder(format)
+        .add_to(&mut graph)
+        .expect("tap node should build");
 
-    graph.connect(source, tap.audio_in).expect("source should connect");
+    graph
+        .connect(source, tap.audio_in)
+        .expect("source should connect");
     graph
         .connect(tap.audio_out, sink_a)
         .expect("tap audio output should connect");
@@ -519,7 +548,9 @@ fn align_on_without_timestamps_falls_back_to_fifo() {
     let gate = graph
         .add_node(GateNodeBuilder { format })
         .expect("gate node should register");
-    graph.connect(source, gate.audio_in).expect("source should connect");
+    graph
+        .connect(source, gate.audio_in)
+        .expect("source should connect");
     graph
         .connect(gate_source, gate.gate_in)
         .expect("gate source should connect");
@@ -544,10 +575,12 @@ fn align_on_without_timestamps_falls_back_to_fifo() {
     runtime
         .run_until_stalled()
         .expect("alignment should fall back to fifo/latest when timestamps are absent");
-    assert!(runtime
-        .try_pull(sink)
-        .expect("pull should succeed")
-        .is_some());
+    assert!(
+        runtime
+            .try_pull(sink)
+            .expect("pull should succeed")
+            .is_some()
+    );
 }
 
 #[test]
@@ -561,7 +594,9 @@ fn built_in_nodes_support_bypass_and_suspend_states() {
         .add_to(&mut graph)
         .expect("tap node should build");
 
-    graph.connect(source, tap_node.audio_in).expect("source should connect");
+    graph
+        .connect(source, tap_node.audio_in)
+        .expect("source should connect");
     graph
         .connect(tap_node.audio_out, sink_a)
         .expect("audio sink should connect");
@@ -579,8 +614,18 @@ fn built_in_nodes_support_bypass_and_suspend_states() {
         .push(source, audio_packet(format, 1, Some(1), 0.5))
         .expect("push should succeed");
     runtime.run_until_stalled().expect("runtime should drain");
-    assert!(runtime.try_pull(sink_a).expect("pull should succeed").is_some());
-    assert!(runtime.try_pull(sink_b).expect("pull should succeed").is_none());
+    assert!(
+        runtime
+            .try_pull(sink_a)
+            .expect("pull should succeed")
+            .is_some()
+    );
+    assert!(
+        runtime
+            .try_pull(sink_b)
+            .expect("pull should succeed")
+            .is_none()
+    );
 
     runtime
         .set_node_state(tap_node.node_id(), NodeControlState::Suspended)
@@ -589,8 +634,18 @@ fn built_in_nodes_support_bypass_and_suspend_states() {
         .push(source, audio_packet(format, 2, Some(2), 0.8))
         .expect("push should succeed");
     runtime.run_until_stalled().expect("runtime should drain");
-    assert!(runtime.try_pull(sink_a).expect("pull should succeed").is_none());
-    assert!(runtime.try_pull(sink_b).expect("pull should succeed").is_none());
+    assert!(
+        runtime
+            .try_pull(sink_a)
+            .expect("pull should succeed")
+            .is_none()
+    );
+    assert!(
+        runtime
+            .try_pull(sink_b)
+            .expect("pull should succeed")
+            .is_none()
+    );
 }
 
 #[test]
@@ -613,14 +668,18 @@ fn linear_pipeline_builder_is_ergonomic_and_resettable() {
         .process_capture_frame(&capture, &mut output)
         .expect("capture should be processed");
     assert!(produced, "linear pipeline should emit capture output");
-    assert!(pipeline
-        .try_pull_metrics()
-        .expect("metrics pull should succeed")
-        .is_some());
-    assert!(pipeline
-        .try_pull_linear_output()
-        .expect("linear pull should succeed")
-        .is_some());
+    assert!(
+        pipeline
+            .try_pull_metrics()
+            .expect("metrics pull should succeed")
+            .is_some()
+    );
+    assert!(
+        pipeline
+            .try_pull_linear_output()
+            .expect("linear pull should succeed")
+            .is_some()
+    );
 
     pipeline.reset_aec3().expect("aec reset should succeed");
     pipeline

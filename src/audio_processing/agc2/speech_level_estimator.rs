@@ -219,8 +219,10 @@ mod tests {
 
     impl TestLevelEstimator {
         fn new(adjacent_speech_frames_threshold: i32) -> Self {
-            let estimator =
-                SpeechLevelEstimatorImpl::new(AdaptiveDigitalConfig::default(), adjacent_speech_frames_threshold);
+            let estimator = SpeechLevelEstimatorImpl::new(
+                AdaptiveDigitalConfig::default(),
+                adjacent_speech_frames_threshold,
+            );
             let initial_speech_level_dbfs = estimator.get_level_dbfs();
             let level_rms_dbfs = initial_speech_level_dbfs / 2.0;
             let level_peak_dbfs = initial_speech_level_dbfs / 3.0;
@@ -296,7 +298,10 @@ mod tests {
             NO_SPEECH_PROBABILITY,
             &mut level_estimator.estimator,
         );
-        assert_eq!(level_estimator.estimator.get_level_dbfs(), estimated_level_dbfs);
+        assert_eq!(
+            level_estimator.estimator.get_level_dbfs(),
+            estimated_level_dbfs
+        );
     }
 
     #[test]

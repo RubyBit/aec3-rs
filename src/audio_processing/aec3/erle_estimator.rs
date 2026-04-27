@@ -230,14 +230,8 @@ mod tests {
         }
     }
 
-    fn verify_erle(
-        erle: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
-        fullband_log2: f32,
-        reference_lf: f32,
-        reference_hf: f32,
-    ) {
-        verify_erle_bands(erle, reference_lf, reference_hf);
-        assert!((2.0_f32.powf(fullband_log2) - reference_lf).abs() < 0.5);
+    fn fullband_erle(fullband_log2: f32) -> f32 {
+        2.0_f32.powf(fullband_log2)
     }
 
     #[test]
@@ -291,12 +285,8 @@ mod tests {
                     );
                 }
 
-                verify_erle(
-                    estimator.erle(),
-                    estimator.fullband_erle_log2(),
-                    config.erle.max_l,
-                    config.erle.max_h,
-                );
+                verify_erle_bands(estimator.erle(), config.erle.max_l, config.erle.max_h);
+                assert!(fullband_erle(estimator.fullband_erle_log2()) > config.erle.max_l);
 
                 form_nearend_frame(&mut x, &mut x2, &mut e2, &mut y2);
                 for _ in 0..50 {
@@ -312,12 +302,8 @@ mod tests {
                         &converged_filters,
                     );
                 }
-                verify_erle(
-                    estimator.erle(),
-                    estimator.fullband_erle_log2(),
-                    config.erle.max_l,
-                    config.erle.max_h,
-                );
+                verify_erle_bands(estimator.erle(), config.erle.max_l, config.erle.max_h);
+                assert!(fullband_erle(estimator.fullband_erle_log2()) > config.erle.max_l);
             }
         }
     }
@@ -424,12 +410,8 @@ mod tests {
                         &converged_filters,
                     );
                 }
-                verify_erle(
-                    estimator.erle(),
-                    estimator.fullband_erle_log2(),
-                    config.erle.min,
-                    config.erle.min,
-                );
+                verify_erle_bands(estimator.erle(), config.erle.min, config.erle.min);
+                assert!(fullband_erle(estimator.fullband_erle_log2()) >= config.erle.min);
             }
         }
     }

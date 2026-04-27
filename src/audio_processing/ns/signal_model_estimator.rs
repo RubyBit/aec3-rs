@@ -15,7 +15,8 @@ fn compute_spectral_diff(
     signal_spectral_sum: f32,
     diff_normalization: f32,
 ) -> f32 {
-    let noise_average = conservative_noise_spectrum.iter().sum::<f32>() * ONE_BY_FFT_SIZE_BY_2_PLUS_1;
+    let noise_average =
+        conservative_noise_spectrum.iter().sum::<f32>() * ONE_BY_FFT_SIZE_BY_2_PLUS_1;
     let signal_average = signal_spectral_sum * ONE_BY_FFT_SIZE_BY_2_PLUS_1;
 
     let mut covariance = 0.0;
@@ -118,7 +119,11 @@ impl SignalModelEstimator {
         signal_spectral_sum: f32,
         signal_energy: f32,
     ) {
-        update_spectral_flatness(signal_spectrum, signal_spectral_sum, &mut self.features.spectral_flatness);
+        update_spectral_flatness(
+            signal_spectrum,
+            signal_spectral_sum,
+            &mut self.features.spectral_flatness,
+        );
 
         let spectral_diff = compute_spectral_diff(
             conservative_noise_spectrum,
@@ -143,7 +148,12 @@ impl SignalModelEstimator {
             self.signal_energy_sum = 0.0;
         }
 
-        update_spectral_lrt(prior_snr, post_snr, &mut self.features.avg_log_lrt, &mut self.features.lrt);
+        update_spectral_lrt(
+            prior_snr,
+            post_snr,
+            &mut self.features.avg_log_lrt,
+            &mut self.features.lrt,
+        );
     }
 
     pub fn prior_model(&self) -> &PriorSignalModel {

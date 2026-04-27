@@ -181,7 +181,8 @@ impl InterpolatedGainCurve {
         let pos = Self::APPROXIMATION_PARAMS_X.partition_point(|&x| x < input_level);
         let index = pos - 1;
 
-        let gain = Self::APPROXIMATION_PARAMS_M[index] * input_level + Self::APPROXIMATION_PARAMS_Q[index];
+        let gain =
+            Self::APPROXIMATION_PARAMS_M[index] * input_level + Self::APPROXIMATION_PARAMS_Q[index];
         debug_assert!(gain >= 0.0);
         gain
     }
@@ -192,7 +193,8 @@ impl InterpolatedGainCurve {
         let region = if input_level < Self::APPROXIMATION_PARAMS_X[0] {
             self.stats.look_ups_identity_region += 1;
             GainCurveRegion::Identity
-        } else if input_level < Self::APPROXIMATION_PARAMS_X[INTERPOLATED_GAIN_CURVE_KNEE_POINTS - 1]
+        } else if input_level
+            < Self::APPROXIMATION_PARAMS_X[INTERPOLATED_GAIN_CURVE_KNEE_POINTS - 1]
         {
             self.stats.look_ups_knee_region += 1;
             GainCurveRegion::Knee
@@ -216,8 +218,8 @@ impl InterpolatedGainCurve {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_processing::agc2::limiter_db_gain_curve::LimiterDbGainCurve;
     use crate::audio_processing::agc2::agc2_common::MAX_ABS_FLOAT_S16_VALUE;
+    use crate::audio_processing::agc2::limiter_db_gain_curve::LimiterDbGainCurve;
 
     const LEVEL_EPSILON: f64 = 1e-2 * MAX_ABS_FLOAT_S16_VALUE as f64;
     const INTERPOLATED_GAIN_CURVE_TOLERANCE: f64 = 1.0 / 32768.0;
@@ -342,7 +344,8 @@ mod tests {
         );
         for level in levels {
             assert!(
-                igc.look_up_gain_to_apply(level as f32) as f64 <= limiter.get_gain_linear(level) + 1e-7
+                igc.look_up_gain_to_apply(level as f32) as f64
+                    <= limiter.get_gain_linear(level) + 1e-7
             );
         }
 
@@ -366,7 +369,8 @@ mod tests {
         );
         for level in levels {
             assert!(
-                igc.look_up_gain_to_apply(level as f32) as f64 <= limiter.get_gain_linear(level) + 1e-7
+                igc.look_up_gain_to_apply(level as f32) as f64
+                    <= limiter.get_gain_linear(level) + 1e-7
             );
         }
 
@@ -389,7 +393,9 @@ mod tests {
             NUM_STEPS,
         );
         for level in levels {
-            assert!(igc.look_up_gain_to_apply(level as f32) as f64 <= limiter.get_gain_linear(level));
+            assert!(
+                igc.look_up_gain_to_apply(level as f32) as f64 <= limiter.get_gain_linear(level)
+            );
         }
 
         let stats = igc.get_stats();

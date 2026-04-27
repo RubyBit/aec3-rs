@@ -1,7 +1,9 @@
 //! Wiener filter estimator for NS frequency-domain suppression.
 
 use super::fast_math::sqrt_fast_approximation;
-use super::ns_common::{FFT_SIZE_BY_2_PLUS_1, LONG_STARTUP_PHASE_BLOCKS, SHORT_STARTUP_PHASE_BLOCKS};
+use super::ns_common::{
+    FFT_SIZE_BY_2_PLUS_1, LONG_STARTUP_PHASE_BLOCKS, SHORT_STARTUP_PHASE_BLOCKS,
+};
 use super::suppression_params::SuppressionParams;
 
 pub struct WienerFilter {
@@ -73,8 +75,8 @@ impl WienerFilter {
         signal_spectrum: &[f32; FFT_SIZE_BY_2_PLUS_1],
     ) {
         for i in 0..FFT_SIZE_BY_2_PLUS_1 {
-            let prev_tsa = self.spectrum_prev_process[i] / (prev_noise_spectrum[i] + 0.0001)
-                * self.filter[i];
+            let prev_tsa =
+                self.spectrum_prev_process[i] / (prev_noise_spectrum[i] + 0.0001) * self.filter[i];
 
             let current_tsa = if signal_spectrum[i] > noise_spectrum[i] {
                 signal_spectrum[i] / (noise_spectrum[i] + 0.0001) - 1.0
@@ -83,13 +85,8 @@ impl WienerFilter {
             };
 
             let snr_prior = 0.98 * prev_tsa + (1.0 - 0.98) * current_tsa;
-            let updated = snr_prior
-                / (self.suppression_params.over_subtraction_factor + snr_prior);
-            self.filter[i] = updated
-                .clamp(
-                    self.suppression_params.minimum_attenuating_gain,
-                    1.0,
-                );
+            let updated = snr_prior / (self.suppression_params.over_subtraction_factor + snr_prior);
+            self.filter[i] = updated.clamp(self.suppression_params.minimum_attenuating_gain, 1.0);
         }
 
         if num_analyzed_frames < SHORT_STARTUP_PHASE_BLOCKS {
@@ -100,8 +97,8 @@ impl WienerFilter {
                         * parametric_noise_spectrum[i];
                 filter_initial /= self.initial_spectral_estimate[i] + 0.0001;
 
-                filter_initial = filter_initial
-                    .clamp(self.suppression_params.minimum_attenuating_gain, 1.0);
+                filter_initial =
+                    filter_initial.clamp(self.suppression_params.minimum_attenuating_gain, 1.0);
 
                 const ONE_BY_SHORT_STARTUP_PHASE_BLOCKS: f32 =
                     1.0 / SHORT_STARTUP_PHASE_BLOCKS as f32;
@@ -129,9 +126,8 @@ impl WienerFilter {
             return 1.0;
         }
 
-        let mut gain = sqrt_fast_approximation(
-            energy_after_filtering / (energy_before_filtering + 1.0),
-        );
+        let mut gain =
+            sqrt_fast_approximation(energy_after_filtering / (energy_before_filtering + 1.0));
 
         const B_LIM: f32 = 0.5;
 

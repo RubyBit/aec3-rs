@@ -19,7 +19,8 @@ impl Default for QuantileNoiseEstimator {
         let mut counter = [0i32; SIMULT];
         let one_by_simult = 1.0 / SIMULT as f32;
         for (i, c) in counter.iter_mut().enumerate() {
-            *c = (LONG_STARTUP_PHASE_BLOCKS as f32 * (i as f32 + 1.0) * one_by_simult).floor() as i32;
+            *c = (LONG_STARTUP_PHASE_BLOCKS as f32 * (i as f32 + 1.0) * one_by_simult).floor()
+                as i32;
         }
 
         Self {
@@ -65,9 +66,9 @@ impl QuantileNoiseEstimator {
                 const WIDTH: f32 = 0.01;
                 const ONE_BY_WIDTH_PLUS_2: f32 = 1.0 / (2.0 * WIDTH);
                 if (log_spectrum[i] - self.log_quantile[j]).abs() < WIDTH {
-                    self.density[j] =
-                        (self.counter[s] as f32 * self.density[j] + ONE_BY_WIDTH_PLUS_2)
-                            * one_by_counter_plus_1;
+                    self.density[j] = (self.counter[s] as f32 * self.density[j]
+                        + ONE_BY_WIDTH_PLUS_2)
+                        * one_by_counter_plus_1;
                 }
             }
 
@@ -87,7 +88,10 @@ impl QuantileNoiseEstimator {
         }
 
         if let Some(k) = quantile_index_to_return {
-            exp_approximation_slice(&self.log_quantile[k..k + FFT_SIZE_BY_2_PLUS_1], &mut self.quantile);
+            exp_approximation_slice(
+                &self.log_quantile[k..k + FFT_SIZE_BY_2_PLUS_1],
+                &mut self.quantile,
+            );
         }
 
         noise_spectrum.copy_from_slice(&self.quantile);

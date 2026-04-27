@@ -1,10 +1,10 @@
+#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+use crate::audio_processing::aec3::aec3_common::detect_neon;
 use crate::audio_processing::aec3::aec3_common::{
     Aec3Optimization, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1,
 };
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
-use crate::audio_processing::aec3::aec3_common::detect_neon;
 
 /// Reference implementation for accumulating an echo return loss estimate from
 /// frequency responses per partition.
@@ -32,10 +32,7 @@ pub fn compute_erl(
     }
 }
 
-fn compute_erl_avx2(
-    h2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
-    erl: &mut [f32; FFT_LENGTH_BY_2_PLUS_1],
-) {
+fn compute_erl_avx2(h2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]], erl: &mut [f32; FFT_LENGTH_BY_2_PLUS_1]) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if detect_avx2() {
         unsafe {
@@ -46,10 +43,7 @@ fn compute_erl_avx2(
     erl_computer(h2, erl);
 }
 
-fn compute_erl_sse2(
-    h2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
-    erl: &mut [f32; FFT_LENGTH_BY_2_PLUS_1],
-) {
+fn compute_erl_sse2(h2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]], erl: &mut [f32; FFT_LENGTH_BY_2_PLUS_1]) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if detect_sse2() {
         unsafe {
@@ -60,10 +54,7 @@ fn compute_erl_sse2(
     erl_computer(h2, erl);
 }
 
-fn compute_erl_neon(
-    h2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
-    erl: &mut [f32; FFT_LENGTH_BY_2_PLUS_1],
-) {
+fn compute_erl_neon(h2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]], erl: &mut [f32; FFT_LENGTH_BY_2_PLUS_1]) {
     #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
     if detect_neon() {
         unsafe {
@@ -143,7 +134,10 @@ unsafe fn compute_erl_neon_impl(
     for partition in h2 {
         let mut k = 0usize;
         while k < FFT_LENGTH_BY_2 {
-            let sum = vaddq_f32(vld1q_f32(erl.as_ptr().add(k)), vld1q_f32(partition.as_ptr().add(k)));
+            let sum = vaddq_f32(
+                vld1q_f32(erl.as_ptr().add(k)),
+                vld1q_f32(partition.as_ptr().add(k)),
+            );
             vst1q_f32(erl.as_mut_ptr().add(k), sum);
             k += 4;
         }

@@ -127,7 +127,6 @@ impl AdaptiveDigitalGainController {
             self.calls_since_last_gain_log = 0;
         }
     }
-
 }
 
 impl Default for AdaptiveDigitalGainController {
@@ -175,8 +174,8 @@ fn limit_gain_by_low_confidence(
         return target_gain_db;
     }
     let limiter_level_dbfs_before_gain = limiter_audio_level_dbfs - last_gain_db;
-    let new_target_gain_db = (LIMITER_THRESHOLD_FOR_AGC_GAIN_DBFS - limiter_level_dbfs_before_gain)
-        .max(0.0);
+    let new_target_gain_db =
+        (LIMITER_THRESHOLD_FOR_AGC_GAIN_DBFS - limiter_level_dbfs_before_gain).max(0.0);
     new_target_gain_db.min(target_gain_db)
 }
 
@@ -231,27 +230,31 @@ mod tests {
 
     #[test]
     fn gain_applier_should_not_crash() {
-        let mut gain_applier =
-            AdaptiveDigitalGainController::new(AdaptiveDigitalConfig::default(), ADJACENT_SPEECH_FRAMES_THRESHOLD as i32);
+        let mut gain_applier = AdaptiveDigitalGainController::new(
+            AdaptiveDigitalConfig::default(),
+            ADJACENT_SPEECH_FRAMES_THRESHOLD as i32,
+        );
         let mut fake_audio = VectorFloatFrame::new(STEREO, FRAME_LEN_10MS_48KHZ, 10000.0);
         let mut fake_view = fake_audio.view();
-        gain_applier.process(&get_frame_info_to_not_adapt(AdaptiveDigitalConfig::default()), &mut fake_view);
+        gain_applier.process(
+            &get_frame_info_to_not_adapt(AdaptiveDigitalConfig::default()),
+            &mut fake_view,
+        );
     }
 
     #[test]
     fn max_gain_applied() {
         let default_config = AdaptiveDigitalConfig::default();
-        let num_frames_to_adapt =
-            (default_config.max_gain_db / get_max_gain_change_per_frame_db(default_config.max_gain_change_db_per_second)) as i32
-                + NUM_EXTRA_FRAMES;
+        let num_frames_to_adapt = (default_config.max_gain_db
+            / get_max_gain_change_per_frame_db(default_config.max_gain_change_db_per_second))
+            as i32
+            + NUM_EXTRA_FRAMES;
         let config = AdaptiveDigitalConfig {
             max_output_noise_level_dbfs: -40.0,
             ..default_config
         };
-        let mut gain_applier = AdaptiveDigitalGainController::new(
-            config,
-            ADJACENT_SPEECH_FRAMES_THRESHOLD as i32,
-        );
+        let mut gain_applier =
+            AdaptiveDigitalGainController::new(config, ADJACENT_SPEECH_FRAMES_THRESHOLD as i32);
         let mut info = get_frame_info_to_not_adapt(config);
         info.speech_level_dbfs = -60.0;
 
@@ -277,8 +280,8 @@ mod tests {
         const INITIAL_LEVEL_DBFS: f32 = -25.0;
         let max_gain_change_db_per_frame =
             get_max_gain_change_per_frame_db(default_config.max_gain_change_db_per_second);
-        let num_frames_to_adapt = (INITIAL_LEVEL_DBFS.abs() / max_gain_change_db_per_frame) as i32
-            + NUM_EXTRA_FRAMES;
+        let num_frames_to_adapt =
+            (INITIAL_LEVEL_DBFS.abs() / max_gain_change_db_per_frame) as i32 + NUM_EXTRA_FRAMES;
 
         let max_change_per_frame_linear = db_to_ratio(max_gain_change_db_per_frame);
 
@@ -330,8 +333,9 @@ mod tests {
             current_value = x;
         }
 
-        let max_change_per_frame_linear =
-            db_to_ratio(get_max_gain_change_per_frame_db(default_config.max_gain_change_db_per_second));
+        let max_change_per_frame_linear = db_to_ratio(get_max_gain_change_per_frame_db(
+            default_config.max_gain_change_db_per_second,
+        ));
         let max_change_per_sample = max_change_per_frame_linear / FRAME_LEN_10MS_48KHZ as f32;
         assert!(maximal_difference <= max_change_per_sample);
     }
@@ -345,8 +349,9 @@ mod tests {
         );
 
         const INITIAL_LEVEL_DBFS: f32 = -25.0;
-        let num_initial_frames =
-            (default_config.initial_gain_db / get_max_gain_change_per_frame_db(default_config.max_gain_change_db_per_second)) as i32;
+        let num_initial_frames = (default_config.initial_gain_db
+            / get_max_gain_change_per_frame_db(default_config.max_gain_change_db_per_second))
+            as i32;
         const NUM_FRAMES: i32 = 50;
 
         assert!(WITH_NOISE_DBFS > default_config.max_output_noise_level_dbfs);
@@ -360,8 +365,7 @@ mod tests {
             gain_applier.process(&info, &mut fake_view);
 
             if i > num_initial_frames {
-                let max_ratio = fake_audio
-                    .view_const()[0]
+                let max_ratio = fake_audio.view_const()[0]
                     .iter()
                     .copied()
                     .fold(f32::MIN, f32::max);
@@ -394,8 +398,9 @@ mod tests {
         );
 
         const INITIAL_LEVEL_DBFS: f32 = -25.0;
-        let num_initial_frames =
-            (default_config.initial_gain_db / get_max_gain_change_per_frame_db(default_config.max_gain_change_db_per_second)) as i32;
+        let num_initial_frames = (default_config.initial_gain_db
+            / get_max_gain_change_per_frame_db(default_config.max_gain_change_db_per_second))
+            as i32;
         const NUM_FRAMES: i32 = 50;
 
         assert!(WITH_NOISE_DBFS > default_config.max_output_noise_level_dbfs);
@@ -410,8 +415,7 @@ mod tests {
             gain_applier.process(&info, &mut fake_view);
 
             if i > num_initial_frames {
-                let max_ratio = fake_audio
-                    .view_const()[0]
+                let max_ratio = fake_audio.view_const()[0]
                     .iter()
                     .copied()
                     .fold(f32::MIN, f32::max);
@@ -422,15 +426,13 @@ mod tests {
 
     #[test]
     fn do_not_increase_gain_with_too_few_speech_frames() {
-        for adjacent_speech_frames_threshold in [
-            1,
-            7,
-            31,
-            ADJACENT_SPEECH_FRAMES_THRESHOLD as i32,
-        ] {
+        for adjacent_speech_frames_threshold in [1, 7, 31, ADJACENT_SPEECH_FRAMES_THRESHOLD as i32]
+        {
             let default_config = AdaptiveDigitalConfig::default();
-            let mut gain_applier =
-                AdaptiveDigitalGainController::new(default_config, adjacent_speech_frames_threshold);
+            let mut gain_applier = AdaptiveDigitalGainController::new(
+                default_config,
+                adjacent_speech_frames_threshold,
+            );
 
             let mut info = get_frame_info_to_not_adapt(default_config);
             info.speech_level_dbfs -= 12.0;
@@ -451,15 +453,13 @@ mod tests {
 
     #[test]
     fn increase_gain_with_enough_speech_frames() {
-        for adjacent_speech_frames_threshold in [
-            1,
-            7,
-            31,
-            ADJACENT_SPEECH_FRAMES_THRESHOLD as i32,
-        ] {
+        for adjacent_speech_frames_threshold in [1, 7, 31, ADJACENT_SPEECH_FRAMES_THRESHOLD as i32]
+        {
             let default_config = AdaptiveDigitalConfig::default();
-            let mut gain_applier =
-                AdaptiveDigitalGainController::new(default_config, adjacent_speech_frames_threshold);
+            let mut gain_applier = AdaptiveDigitalGainController::new(
+                default_config,
+                adjacent_speech_frames_threshold,
+            );
 
             let mut info = get_frame_info_to_not_adapt(default_config);
             info.speech_level_dbfs -= 12.0;

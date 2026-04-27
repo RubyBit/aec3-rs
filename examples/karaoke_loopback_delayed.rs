@@ -112,13 +112,7 @@ fn main() -> Result<()> {
     let (tx_output, rx_output) = bounded::<Vec<f32>>(32);
 
     thread::spawn(move || {
-        processing_thread(
-            rx_capture,
-            rx_render,
-            tx_output,
-            sample_rate_hz,
-            channels,
-        )
+        processing_thread(rx_capture, rx_render, tx_output, sample_rate_hz, channels)
     });
 
     let io_config = cpal::StreamConfig {
@@ -177,7 +171,9 @@ fn main() -> Result<()> {
     loopback_stream.play()?;
     output_stream.play()?;
 
-    println!("Running delayed karaoke loopback with the linear voice pipeline. Press Ctrl+C to exit.");
+    println!(
+        "Running delayed karaoke loopback with the linear voice pipeline. Press Ctrl+C to exit."
+    );
 
     loop {
         thread::sleep(Duration::from_millis(100));

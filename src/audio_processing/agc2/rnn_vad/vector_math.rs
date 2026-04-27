@@ -70,15 +70,15 @@ impl VectorMath {
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m128, _mm_add_ps, _mm_cvtss_f32, _mm_loadu_ps, _mm_movehl_ps, _mm_mul_ps,
-    _mm_setzero_ps, _mm_shuffle_ps, _mm256_add_ps, _mm256_castps256_ps128, _mm256_extractf128_ps,
-    _mm256_loadu_ps, _mm256_mul_ps, _mm256_setzero_ps,
+    __m128, _mm_add_ps, _mm_cvtss_f32, _mm_loadu_ps, _mm_movehl_ps, _mm_mul_ps, _mm_setzero_ps,
+    _mm_shuffle_ps, _mm256_add_ps, _mm256_castps256_ps128, _mm256_extractf128_ps, _mm256_loadu_ps,
+    _mm256_mul_ps, _mm256_setzero_ps,
 };
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m128, _mm_add_ps, _mm_cvtss_f32, _mm_loadu_ps, _mm_movehl_ps, _mm_mul_ps,
-    _mm_setzero_ps, _mm_shuffle_ps, _mm256_add_ps, _mm256_castps256_ps128, _mm256_extractf128_ps,
-    _mm256_loadu_ps, _mm256_mul_ps, _mm256_setzero_ps,
+    __m128, _mm_add_ps, _mm_cvtss_f32, _mm_loadu_ps, _mm_movehl_ps, _mm_mul_ps, _mm_setzero_ps,
+    _mm_shuffle_ps, _mm256_add_ps, _mm256_castps256_ps128, _mm256_extractf128_ps, _mm256_loadu_ps,
+    _mm256_mul_ps, _mm256_setzero_ps,
 };
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -145,13 +145,13 @@ unsafe fn dot_product_sse2_impl(x: &[f32], y: &[f32]) -> f32 {
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{
-    float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32,
-    vld1q_f32, vmulq_f32, vpadd_f32, vst1_f32,
+    float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32, vld1q_f32,
+    vmulq_f32, vpadd_f32, vst1_f32,
 };
 #[cfg(target_arch = "arm")]
 use std::arch::arm::{
-    float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32,
-    vld1q_f32, vmulq_f32, vpadd_f32, vst1_f32,
+    float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32, vld1q_f32,
+    vmulq_f32, vpadd_f32, vst1_f32,
 };
 
 #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
@@ -240,7 +240,8 @@ mod tests {
         for cpu_features in get_cpu_features_to_test() {
             let vector_math = VectorMath::new(cpu_features);
             let energy = vector_math.dot_product(&X, &X);
-            let energy_subspan = vector_math.dot_product(&X[..SIZE_OF_X_SUBSPAN], &X[..SIZE_OF_X_SUBSPAN]);
+            let energy_subspan =
+                vector_math.dot_product(&X[..SIZE_OF_X_SUBSPAN], &X[..SIZE_OF_X_SUBSPAN]);
 
             assert!(
                 (energy - ENERGY_OF_X).abs() < 1e-6,

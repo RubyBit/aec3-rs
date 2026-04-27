@@ -85,7 +85,9 @@ fn apply_gain_with_ramping(
     float_frame: &mut [&mut [f32]],
 ) {
     // Do not modify signal.
-    if last_gain_linear == gain_at_end_of_frame_linear && gain_close_to_one(gain_at_end_of_frame_linear) {
+    if last_gain_linear == gain_at_end_of_frame_linear
+        && gain_close_to_one(gain_at_end_of_frame_linear)
+    {
         return;
     }
 
@@ -158,7 +160,8 @@ mod tests {
         let target_gain_factor = 0.5f32;
         let num_channels = 3usize;
         let samples_per_channel = 4usize;
-        let mut fake_audio = VectorFloatFrame::new(num_channels, samples_per_channel, initial_signal_level);
+        let mut fake_audio =
+            VectorFloatFrame::new(num_channels, samples_per_channel, initial_signal_level);
         let mut gain_applier = GainApplier::new(false, initial_gain_factor);
 
         gain_applier.set_gain_factor(target_gain_factor);
@@ -174,8 +177,11 @@ mod tests {
                 max_signal_change = max_signal_change.max(current_change);
                 last_signal_level = sample;
             }
-            let total_gain_change = ((initial_gain_factor - target_gain_factor) * initial_signal_level).abs();
-            assert!((max_signal_change - total_gain_change / samples_per_channel as f32).abs() < 0.1);
+            let total_gain_change =
+                ((initial_gain_factor - target_gain_factor) * initial_signal_level).abs();
+            assert!(
+                (max_signal_change - total_gain_change / samples_per_channel as f32).abs() < 0.1
+            );
         }
 
         let mut next_fake_audio_frame =
@@ -183,6 +189,9 @@ mod tests {
         let mut next_view = next_fake_audio_frame.view();
         gain_applier.apply_gain(&mut next_view);
 
-        assert!((next_fake_audio_frame.sample(0, 0) - initial_signal_level * target_gain_factor).abs() < 0.1);
+        assert!(
+            (next_fake_audio_frame.sample(0, 0) - initial_signal_level * target_gain_factor).abs()
+                < 0.1
+        );
     }
 }

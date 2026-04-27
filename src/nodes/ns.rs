@@ -137,7 +137,10 @@ impl NodeFactory for NoiseSuppressorFactory {
         Ok(())
     }
 
-    fn build(self: Box<Self>, _ctx: &mut crate::graph::BuildCtx) -> GraphResult<Box<dyn NodeRunner>> {
+    fn build(
+        self: Box<Self>,
+        _ctx: &mut crate::graph::BuildCtx,
+    ) -> GraphResult<Box<dyn NodeRunner>> {
         let internal_rate = internal_sample_rate(self.format, None);
         Ok(Box::new(NoiseSuppressorRunner {
             config: self.config,
@@ -198,10 +201,13 @@ impl NodeRunner for NoiseSuppressorRunner {
             }
         }
 
-        self.io.load_chunk(packet.payload(), "NoiseSuppressorNode")?;
+        self.io
+            .load_chunk(packet.payload(), "NoiseSuppressorNode")?;
         self.io.audio_buffer_mut().split_into_frequency_bands();
 
-        if let (Some(analysis_port), Some(analysis_io)) = (self.analysis_in, self.analysis_io.as_mut()) {
+        if let (Some(analysis_port), Some(analysis_io)) =
+            (self.analysis_in, self.analysis_io.as_mut())
+        {
             if let Some(analysis_packet) = ctx.take(analysis_port)? {
                 analysis_io.load_chunk(analysis_packet.payload(), "NoiseSuppressorNode")?;
                 analysis_io.audio_buffer_mut().split_into_frequency_bands();

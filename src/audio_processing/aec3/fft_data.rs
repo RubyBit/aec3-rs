@@ -1,6 +1,4 @@
-use super::aec3_common::{
-    Aec3Optimization, FFT_LENGTH, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1
-};
+use super::aec3_common::{Aec3Optimization, FFT_LENGTH, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1};
 
 /// Holds the positive-frequency bins (including DC and Nyquist) for a
 /// 128-point real-valued FFT.

@@ -35,9 +35,7 @@ fn update_cepstral_difference_stats(
     sym_matrix_buf.push(&distances);
 }
 
-fn compute_scaled_half_vorbis_window(
-    scaling: f32,
-) -> [f32; FRAME_SIZE_20_MS_24_KHZ / 2] {
+fn compute_scaled_half_vorbis_window(scaling: f32) -> [f32; FRAME_SIZE_20_MS_24_KHZ / 2] {
     const HALF_SIZE: usize = FRAME_SIZE_20_MS_24_KHZ / 2;
     let mut half_window = [0.0f32; HALF_SIZE];
     for (i, v) in half_window.iter_mut().enumerate().take(HALF_SIZE) {
@@ -104,9 +102,7 @@ impl SpectralFeaturesExtractor {
         let mut planner = FftPlanner::<f32>::new();
         let fft_forward = planner.plan_fft_forward(FRAME_SIZE_20_MS_24_KHZ);
         Self {
-            half_window: compute_scaled_half_vorbis_window(
-                1.0 / FRAME_SIZE_20_MS_24_KHZ as f32,
-            ),
+            half_window: compute_scaled_half_vorbis_window(1.0 / FRAME_SIZE_20_MS_24_KHZ as f32),
             fft_forward,
             fft_buffer: vec![Complex32::new(0.0, 0.0); FRAME_SIZE_20_MS_24_KHZ],
             reference_frame_fft: [0.0; FRAME_SIZE_20_MS_24_KHZ],
@@ -220,9 +216,9 @@ impl SpectralFeaturesExtractor {
         );
 
         for i in 0..self.bands_cross_corr.len() {
-            self.bands_cross_corr[i] /=
-                (0.001 + self.reference_frame_bands_energy[i] * self.lagged_frame_bands_energy[i])
-                    .sqrt();
+            self.bands_cross_corr[i] /= (0.001
+                + self.reference_frame_bands_energy[i] * self.lagged_frame_bands_energy[i])
+                .sqrt();
         }
 
         compute_dct(&self.bands_cross_corr, &self.dct_table, bands_cross_corr);
@@ -293,18 +289,16 @@ mod tests {
 
         // With silence.
         let (hb, avg, fd, sd, cc, var) = split_feature_vector(&mut feature_vector);
-        let is_silence = sfe.check_silence_compute_features(
-            &samples, &samples, hb, avg, fd, sd, cc, var,
-        );
+        let is_silence =
+            sfe.check_silence_compute_features(&samples, &samples, hb, avg, fd, sd, cc, var);
         assert!(is_silence);
         assert!(feature_vector.iter().all(|&x| x == INITIAL_FEATURE_VAL));
 
         // With no silence.
         write_test_data(&mut samples);
         let (hb, avg, fd, sd, cc, var) = split_feature_vector(&mut feature_vector);
-        let is_silence = sfe.check_silence_compute_features(
-            &samples, &samples, hb, avg, fd, sd, cc, var,
-        );
+        let is_silence =
+            sfe.check_silence_compute_features(&samples, &samples, hb, avg, fd, sd, cc, var);
         assert!(!is_silence);
         assert!(!feature_vector.iter().all(|&x| x == INITIAL_FEATURE_VAL));
     }
@@ -318,21 +312,15 @@ mod tests {
         let mut feature_vector = [0.0f32; TEST_FEATURE_VECTOR_SIZE];
         for _ in 0..CEPSTRAL_COEFFS_HISTORY_SIZE {
             let (hb, avg, fd, sd, cc, var) = split_feature_vector(&mut feature_vector);
-            let _ = sfe.check_silence_compute_features(&samples, &samples, hb, avg, fd, sd, cc, var);
+            let _ =
+                sfe.check_silence_compute_features(&samples, &samples, hb, avg, fd, sd, cc, var);
         }
 
         let mut feature_vector_last = [0.0f32; TEST_FEATURE_VECTOR_SIZE];
         let (hb, avg_last, fd_last, sd_last, cc, var_last) =
             split_feature_vector(&mut feature_vector_last);
         let _ = sfe.check_silence_compute_features(
-            &samples,
-            &samples,
-            hb,
-            avg_last,
-            fd_last,
-            sd_last,
-            cc,
-            var_last,
+            &samples, &samples, hb, avg_last, fd_last, sd_last, cc, var_last,
         );
 
         // Average is unchanged.

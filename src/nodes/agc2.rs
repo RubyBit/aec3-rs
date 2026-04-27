@@ -1,9 +1,9 @@
 use crate::audio_processing::agc2::input_volume_controller::Config as InputVolumeControllerConfig;
 use crate::audio_processing::gain_controller2::{GainController2, GainController2Config};
 use crate::graph::{
-    AccessMode, GraphBuilder, GraphError, GraphResult, InputOptions, NodeControlState,
-    NodeFactory, NodeId, NodeRunner, NodeSpec, OutPort, OutputOptions, Packet, ProcessCtx,
-    QueueConfig, SchedulePlan,
+    AccessMode, GraphBuilder, GraphError, GraphResult, InputOptions, NodeControlState, NodeFactory,
+    NodeId, NodeRunner, NodeSpec, OutPort, OutputOptions, Packet, ProcessCtx, QueueConfig,
+    SchedulePlan,
 };
 
 use super::audio::{AudioChunk, AudioFormat};
@@ -127,7 +127,11 @@ impl NodeSpec for Agc2NodeBuilder {
             },
         );
         let recommended_input_volume_out = self.with_recommended_input_volume.then(|| {
-            graph.register_output::<i32>(node, "recommended_input_volume_out", OutputOptions::default())
+            graph.register_output::<i32>(
+                node,
+                "recommended_input_volume_out",
+                OutputOptions::default(),
+            )
         });
 
         graph.finish_node(
@@ -174,7 +178,10 @@ impl NodeFactory for Agc2Factory {
         Ok(())
     }
 
-    fn build(self: Box<Self>, _ctx: &mut crate::graph::BuildCtx) -> GraphResult<Box<dyn NodeRunner>> {
+    fn build(
+        self: Box<Self>,
+        _ctx: &mut crate::graph::BuildCtx,
+    ) -> GraphResult<Box<dyn NodeRunner>> {
         let internal_rate = internal_sample_rate(self.format, None);
         Ok(Box::new(Agc2Runner {
             config: self.config,

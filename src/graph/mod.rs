@@ -149,8 +149,13 @@ pub struct Dependency {
 
 #[derive(Debug, Clone)]
 pub enum SchedulePlan {
-    OnArrival { triggers: Vec<RawInPort> },
-    AlignOn { trigger: RawInPort, deps: Vec<Dependency> },
+    OnArrival {
+        triggers: Vec<RawInPort>,
+    },
+    AlignOn {
+        trigger: RawInPort,
+        deps: Vec<Dependency>,
+    },
     Custom,
 }
 
@@ -336,7 +341,9 @@ impl<'a> ReadyCtx<'a> {
     }
 
     pub fn control_state(&self) -> NodeControlState {
-        self.runtime.node_state(self.node_id).unwrap_or(NodeControlState::Active)
+        self.runtime
+            .node_state(self.node_id)
+            .unwrap_or(NodeControlState::Active)
     }
 }
 
@@ -380,11 +387,13 @@ impl<'a> ProcessCtx<'a> {
     }
 
     pub fn take<T: PortData>(&mut self, port: InPort<T>) -> GraphResult<Option<PacketHandle<T>>> {
-        self.runtime.take_from_input(port.raw, self.matched.get(&port.raw).copied())
+        self.runtime
+            .take_from_input(port.raw, self.matched.get(&port.raw).copied())
     }
 
     pub fn peek<T: PortData>(&self, port: InPort<T>) -> GraphResult<Option<PacketHandle<T>>> {
-        self.runtime.peek_input(port.raw, self.matched.get(&port.raw).copied())
+        self.runtime
+            .peek_input(port.raw, self.matched.get(&port.raw).copied())
     }
 
     pub fn emit<T: PortData>(&mut self, port: OutPort<T>, packet: Packet<T>) -> GraphResult<()> {
@@ -408,11 +417,13 @@ pub struct NodeIoBuilder<'a> {
 
 impl<'a> NodeIoBuilder<'a> {
     pub fn input<T: PortData>(&mut self, name: &str, options: InputOptions) -> InPort<T> {
-        self.builder.register_input::<T>(self.node_id, name, options)
+        self.builder
+            .register_input::<T>(self.node_id, name, options)
     }
 
     pub fn output<T: PortData>(&mut self, name: &str, options: OutputOptions) -> OutPort<T> {
-        self.builder.register_output::<T>(self.node_id, name, options)
+        self.builder
+            .register_output::<T>(self.node_id, name, options)
     }
 
     pub fn schedule_plan(&mut self, plan: SchedulePlan) {
@@ -491,10 +502,14 @@ impl GraphBuilder {
             schedule: None,
         };
         factory.describe(&mut io)?;
-        let schedule = io.schedule.take().ok_or_else(|| GraphError::MissingSchedulePlan {
-            node: name.to_string(),
-        })?;
-        io.builder.finish_node(node_id, schedule, Box::new(factory))?;
+        let schedule = io
+            .schedule
+            .take()
+            .ok_or_else(|| GraphError::MissingSchedulePlan {
+                node: name.to_string(),
+            })?;
+        io.builder
+            .finish_node(node_id, schedule, Box::new(factory))?;
         Ok(node_id)
     }
 
@@ -552,7 +567,12 @@ impl GraphBuilder {
             }
         }
 
-        validate_cycles(&self.nodes, &self.edges, &self.input_ports, &self.output_ports)?;
+        validate_cycles(
+            &self.nodes,
+            &self.edges,
+            &self.input_ports,
+            &self.output_ports,
+        )?;
 
         let mut output_edges = vec![Vec::new(); self.output_ports.len()];
         for edge in &self.edges {
@@ -696,7 +716,9 @@ impl Runtime {
             });
         }
 
-        let mut input_queues = (0..spec.input_ports.len()).map(|_| None).collect::<Vec<_>>();
+        let mut input_queues = (0..spec.input_ports.len())
+            .map(|_| None)
+            .collect::<Vec<_>>();
         for port in &spec.input_ports {
             input_queues[port.raw.0] = Some(PortQueue {
                 items: VecDeque::new(),
@@ -721,11 +743,7 @@ impl Runtime {
         self.take_from_input(sink.raw, None)
     }
 
-    pub fn set_node_state(
-        &mut self,
-        node_id: NodeId,
-        state: NodeControlState,
-    ) -> GraphResult<()> {
+    pub fn set_node_state(&mut self, node_id: NodeId, state: NodeControlState) -> GraphResult<()> {
         let node = self
             .nodes
             .get_mut(node_id.0)
@@ -833,12 +851,10 @@ impl Runtime {
                 }))
             }
             SchedulePlan::Custom => {
-                let ready = self.nodes[node_id.0]
-                    .runner
-                    .ready(&ReadyCtx {
-                        runtime: self,
-                        node_id,
-                    })?;
+                let ready = self.nodes[node_id.0].runner.ready(&ReadyCtx {
+                    runtime: self,
+                    node_id,
+                })?;
                 if ready == ReadyState::Ready {
                     Ok(Some(ExecutionContext {
                         trigger: None,
@@ -998,14 +1014,16 @@ impl Runtime {
 
         match policy {
             MatchPolicy::AnyAvailable => Ok(default_queue_index(queue)),
-            MatchPolicy::ExactTimestamp => Ok(
-                find_matching_timestamp(queue, trigger_timestamp, 0, true)
-                    .or_else(|| fallback_if_missing_timestamps(queue)),
-            ),
-            MatchPolicy::WithinSkew { ticks } => Ok(
-                find_matching_timestamp(queue, trigger_timestamp, ticks, false)
-                    .or_else(|| fallback_if_missing_timestamps(queue)),
-            ),
+            MatchPolicy::ExactTimestamp => {
+                Ok(find_matching_timestamp(queue, trigger_timestamp, 0, true)
+                    .or_else(|| fallback_if_missing_timestamps(queue)))
+            }
+            MatchPolicy::WithinSkew { ticks } => {
+                Ok(
+                    find_matching_timestamp(queue, trigger_timestamp, ticks, false)
+                        .or_else(|| fallback_if_missing_timestamps(queue)),
+                )
+            }
             MatchPolicy::LatestBefore { max_age } => {
                 let mut best = None;
                 let mut missing_timestamps = false;
@@ -1014,7 +1032,9 @@ impl Runtime {
                         missing_timestamps = true;
                         continue;
                     };
-                    if timestamp.clock != trigger_timestamp.clock || timestamp.start > trigger_timestamp.start {
+                    if timestamp.clock != trigger_timestamp.clock
+                        || timestamp.start > trigger_timestamp.start
+                    {
                         continue;
                     }
                     let age = trigger_timestamp.start - timestamp.start;
@@ -1023,11 +1043,14 @@ impl Runtime {
                     }
                     best = Some(index);
                 }
-                Ok(best.or_else(|| missing_timestamps.then(|| default_queue_index(queue)).flatten()))
+                Ok(best.or_else(|| {
+                    missing_timestamps
+                        .then(|| default_queue_index(queue))
+                        .flatten()
+                }))
             }
         }
     }
-
 }
 
 #[derive(Debug)]
@@ -1405,7 +1428,9 @@ mod tests {
         let mut builder = GraphBuilder::new();
         let source = builder.source::<Dummy>("src", QueueConfig::bounded(4));
         let sink = builder.sink::<Dummy>("sink", QueueConfig::bounded(4));
-        let node = builder.add_node(PassthroughSpec).expect("node should register");
+        let node = builder
+            .add_node(PassthroughSpec)
+            .expect("node should register");
         builder
             .connect(source, node.input)
             .expect("source should connect");

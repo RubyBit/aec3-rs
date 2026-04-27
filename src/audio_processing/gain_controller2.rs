@@ -7,20 +7,22 @@ use crate::audio_processing::agc2::agc2_common::{
     ADJACENT_SPEECH_FRAMES_THRESHOLD, MAX_ABS_FLOAT_S16_VALUE,
     SATURATION_PROTECTOR_INITIAL_HEADROOM_DB,
 };
-use crate::audio_processing::agc2::cpu_features::{get_available_cpu_features, AvailableCpuFeatures};
+use crate::audio_processing::agc2::cpu_features::{
+    AvailableCpuFeatures, get_available_cpu_features,
+};
 use crate::audio_processing::agc2::gain_applier::GainApplier;
 use crate::audio_processing::agc2::input_volume_controller::{
     Config as InputVolumeControllerConfig, InputVolumeController,
 };
 use crate::audio_processing::agc2::limiter::Limiter;
 use crate::audio_processing::agc2::noise_level_estimator::{
-    create_noise_floor_estimator, NoiseLevelEstimator,
+    NoiseLevelEstimator, create_noise_floor_estimator,
 };
 use crate::audio_processing::agc2::saturation_protector::{
-    create_saturation_protector, SaturationProtector,
+    SaturationProtector, create_saturation_protector,
 };
 use crate::audio_processing::agc2::speech_level_estimator::{
-    create_speech_level_estimator, SpeechLevelEstimator,
+    SpeechLevelEstimator, create_speech_level_estimator,
 };
 use crate::audio_processing::agc2::vad_wrapper::VoiceActivityDetectorWrapper;
 use crate::audio_processing::audio_buffer::AudioBuffer;
@@ -136,13 +138,17 @@ impl GainController2 {
                 ADJACENT_SPEECH_FRAMES_THRESHOLD as i32,
             ));
             if use_internal_vad {
-                vad = Some(VoiceActivityDetectorWrapper::new(cpu_features, sample_rate_hz));
+                vad = Some(VoiceActivityDetectorWrapper::new(
+                    cpu_features,
+                    sample_rate_hz,
+                ));
             }
         }
 
         let mut input_volume_controller = None;
         if config.input_volume_controller.enabled {
-            let mut c = InputVolumeController::new(num_channels as i32, input_volume_controller_config);
+            let mut c =
+                InputVolumeController::new(num_channels as i32, input_volume_controller_config);
             c.initialize();
             input_volume_controller = Some(c);
         }
@@ -212,7 +218,9 @@ impl GainController2 {
 
         let mut speech_probability = 0.0;
         if let Some(vad) = self.vad.as_mut() {
-            let frame: Vec<&[f32]> = (0..audio.num_channels()).map(|ch| audio.channel(ch)).collect();
+            let frame: Vec<&[f32]> = (0..audio.num_channels())
+                .map(|ch| audio.channel(ch))
+                .collect();
             speech_probability = vad.analyze(&frame);
         }
 
@@ -220,7 +228,9 @@ impl GainController2 {
 
         let mut noise_rms_dbfs = None;
         if let Some(n) = self.noise_level_estimator.as_mut() {
-            let frame: Vec<&[f32]> = (0..audio.num_channels()).map(|ch| audio.channel(ch)).collect();
+            let frame: Vec<&[f32]> = (0..audio.num_channels())
+                .map(|ch| audio.channel(ch))
+                .collect();
             noise_rms_dbfs = Some(n.analyze(&frame));
         }
 
@@ -237,7 +247,11 @@ impl GainController2 {
             let s = speech_level.expect("speech level estimator must exist when IVC is enabled");
             self.recommended_input_volume = c.recommend_input_volume(
                 speech_probability,
-                if s.is_confident { Some(s.rms_dbfs) } else { None },
+                if s.is_confident {
+                    Some(s.rms_dbfs)
+                } else {
+                    None
+                },
             );
         }
 
@@ -255,10 +269,12 @@ impl GainController2 {
                     .saturation_protector
                     .as_mut()
                     .expect("saturation protector must exist with adaptive digital");
-                let s = speech_level.expect("speech level estimator must exist with adaptive digital");
+                let s =
+                    speech_level.expect("speech level estimator must exist with adaptive digital");
                 saturation.analyze(speech_probability, audio_levels.peak_dbfs, s.rms_dbfs);
                 let limiter_envelope_dbfs = float_s16_to_dbfs(self.limiter.last_audio_level());
-                let noise = noise_rms_dbfs.expect("noise estimator must exist with adaptive digital");
+                let noise =
+                    noise_rms_dbfs.expect("noise estimator must exist with adaptive digital");
 
                 let frame_info = FrameInfo {
                     speech_probability,
@@ -268,10 +284,7 @@ impl GainController2 {
                     headroom_db: saturation.headroom_db(),
                     limiter_envelope_dbfs,
                 };
-                adaptive.process(
-                    &frame_info,
-                    &mut frame_mut,
-                );
+                adaptive.process(&frame_info, &mut frame_mut);
             }
 
             self.fixed_gain_applier.apply_gain(&mut frame_mut);
@@ -362,7 +375,9 @@ mod tests {
 
         for _ in 0..(num_frames + 1) {
             set_audio_buffer_samples(input_level, &mut ab);
-            let applied_volume = agc2.recommended_input_volume().unwrap_or(applied_initial_volume);
+            let applied_volume = agc2
+                .recommended_input_volume()
+                .unwrap_or(applied_initial_volume);
             agc2.analyze(applied_volume, &ab);
             agc2.process(false, &mut ab);
         }
@@ -371,7 +386,10 @@ mod tests {
         ab.channel(0)[num_samples - 1]
     }
 
-    fn create_agc2_fixed_digital_mode(fixed_gain_db: f32, sample_rate_hz: usize) -> GainController2 {
+    fn create_agc2_fixed_digital_mode(
+        fixed_gain_db: f32,
+        sample_rate_hz: usize,
+    ) -> GainController2 {
         let mut config = GainController2Config::default();
         config.adaptive_digital.enabled = false;
         config.input_volume_controller.enabled = false;
@@ -412,7 +430,8 @@ mod tests {
 
     fn i16_samples_from_le_bytes(bytes: &[u8]) -> Vec<i16> {
         assert_eq!(bytes.len() % 2, 0);
-        bytes.chunks_exact(2)
+        bytes
+            .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]))
             .collect()
     }
@@ -559,7 +578,7 @@ mod tests {
 
     #[test]
     fn check_get_recommended_input_volume_when_input_volume_controller_not_enabled_and_specific_config_used()
-    {
+     {
         const HIGH_INPUT_LEVEL: f32 = 32767.0;
         const LOW_INPUT_LEVEL: f32 = 1000.0;
         const INITIAL_INPUT_VOLUME: i32 = 100;
@@ -647,7 +666,7 @@ mod tests {
 
     #[test]
     fn check_get_recommended_input_volume_when_input_volume_controller_enabled_and_specific_config_used()
-    {
+     {
         const HIGH_INPUT_LEVEL: f32 = 32767.0;
         const LOW_INPUT_LEVEL: f32 = 1000.0;
         const INITIAL_INPUT_VOLUME: i32 = 100;
@@ -779,8 +798,18 @@ mod tests {
     #[test]
     fn check_saturation_behavior_with_limiter() {
         let cases = [
-            (0.1f32, LIMITER_MAX_INPUT_LEVEL_DBFS as f32 - 0.01, 8000usize, false),
-            (0.1f32, LIMITER_MAX_INPUT_LEVEL_DBFS as f32 - 0.01, 48000usize, false),
+            (
+                0.1f32,
+                LIMITER_MAX_INPUT_LEVEL_DBFS as f32 - 0.01,
+                8000usize,
+                false,
+            ),
+            (
+                0.1f32,
+                LIMITER_MAX_INPUT_LEVEL_DBFS as f32 - 0.01,
+                48000usize,
+                false,
+            ),
             (
                 LIMITER_MAX_INPUT_LEVEL_DBFS as f32 + 0.01,
                 10.0,
@@ -798,14 +827,8 @@ mod tests {
         for &(gain_db_min, gain_db_max, sample_rate_hz, saturation_expected) in &cases {
             for gain_db in lin_space(gain_db_min, gain_db_max, 10) {
                 let mut agc2_fixed = create_agc2_fixed_digital_mode(gain_db, sample_rate_hz);
-                let processed_sample = run_agc2_with_constant_input(
-                    &mut agc2_fixed,
-                    32767.0,
-                    5,
-                    sample_rate_hz,
-                    1,
-                    0,
-                );
+                let processed_sample =
+                    run_agc2_with_constant_input(&mut agc2_fixed, 32767.0, 5, sample_rate_hz, 1, 0);
                 if saturation_expected {
                     assert!((processed_sample - 32767.0).abs() < 1e-3);
                 } else {

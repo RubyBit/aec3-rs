@@ -1,13 +1,12 @@
 //! Prior model estimator using feature histograms.
 
 use super::histograms::{HISTOGRAM_SIZE, Histograms};
-use super::ns_common::{BIN_SIZE_LRT, BIN_SIZE_SPEC_DIFF, BIN_SIZE_SPEC_FLAT, FEATURE_UPDATE_WINDOW_SIZE};
+use super::ns_common::{
+    BIN_SIZE_LRT, BIN_SIZE_SPEC_DIFF, BIN_SIZE_SPEC_FLAT, FEATURE_UPDATE_WINDOW_SIZE,
+};
 use super::prior_signal_model::PriorSignalModel;
 
-fn find_first_of_two_largest_peaks(
-    bin_size: f32,
-    histogram: &[i32; HISTOGRAM_SIZE],
-) -> (f32, i32) {
+fn find_first_of_two_largest_peaks(bin_size: f32, histogram: &[i32; HISTOGRAM_SIZE]) -> (f32, i32) {
     let mut peak_value = 0;
     let mut secondary_peak_value = 0;
     let mut peak_position = 0.0f32;
@@ -116,13 +115,12 @@ impl PriorSignalModelEstimator {
             1
         };
 
-        let use_spec_diff = if (spectral_diff_peak_weight as f32) < 0.3 * 500.0
-            || low_lrt_fluctuations
-        {
-            0
-        } else {
-            1
-        };
+        let use_spec_diff =
+            if (spectral_diff_peak_weight as f32) < 0.3 * 500.0 || low_lrt_fluctuations {
+                0
+            } else {
+                1
+            };
 
         self.prior_model.template_diff_threshold =
             (1.2 * spectral_diff_peak_position).clamp(0.16, 1.0);

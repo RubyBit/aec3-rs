@@ -376,14 +376,16 @@ impl RenderDelayBuffer {
             self.min_latency_blocks = latency_blocks;
             self.excess_render_detection_counter = 0;
         }
-        self.data_dumper
-            .dump_raw_f32(DiagnosticLevel::Production, "aec3_latency_blocks", latency_blocks as f32);
-        self.data_dumper
-            .dump_raw_f32(
-                DiagnosticLevel::Production,
-                "aec3_min_latency_blocks",
-                self.min_latency_blocks as f32,
-            );
+        self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
+            "aec3_latency_blocks",
+            latency_blocks as f32,
+        );
+        self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Production,
+            "aec3_min_latency_blocks",
+            self.min_latency_blocks as f32,
+        );
         self.data_dumper.dump_raw_f32(
             DiagnosticLevel::Production,
             "aec3_excess_render_detected",

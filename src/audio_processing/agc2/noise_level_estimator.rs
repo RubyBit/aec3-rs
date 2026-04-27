@@ -116,7 +116,8 @@ impl NoiseLevelEstimator for NoiseFloorEstimator {
 
         if self.counter == 0 {
             self.first_period = false;
-            self.noise_energy = smooth_noise_floor_estimate(self.noise_energy, self.preliminary_noise_energy);
+            self.noise_energy =
+                smooth_noise_floor_estimate(self.noise_energy, self.preliminary_noise_energy);
             self.counter = Self::UPDATE_PERIOD_NUM_FRAMES;
             self.preliminary_noise_energy_set = false;
         } else if self.first_period {
@@ -134,9 +135,9 @@ impl NoiseLevelEstimator for NoiseFloorEstimator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f32::consts::PI;
     use crate::audio_processing::agc2::vector_float_frame::VectorFloatFrame;
     use crate::test_support::random::Random;
+    use std::f32::consts::PI;
 
     const NUM_ITERATIONS: usize = 200;
     const MAX_S16: f32 = i16::MAX as f32;

@@ -1,7 +1,9 @@
 //! Wrapper around a mono VAD with first-channel analysis, resampling, and periodic reset.
 
 use crate::audio_processing::agc2::cpu_features::AvailableCpuFeatures;
-use crate::audio_processing::agc2::rnn_vad::common::{FEATURE_VECTOR_SIZE, FRAME_SIZE_10_MS_24_KHZ};
+use crate::audio_processing::agc2::rnn_vad::common::{
+    FEATURE_VECTOR_SIZE, FRAME_SIZE_10_MS_24_KHZ,
+};
 use crate::audio_processing::agc2::rnn_vad::features_extraction::FeaturesExtractor;
 use crate::audio_processing::agc2::rnn_vad::rnn::RnnVad;
 use crate::audio_processing::resampler::push_sinc_resampler::PushSincResampler;
@@ -46,9 +48,8 @@ impl MonoVad for MonoVadImpl {
     fn analyze(&mut self, frame: &[f32]) -> f32 {
         assert_eq!(frame.len(), FRAME_SIZE_10_MS_24_KHZ);
         let mut feature_vector = [0.0f32; FEATURE_VECTOR_SIZE];
-        let frame_array: &[f32; FRAME_SIZE_10_MS_24_KHZ] = frame
-            .try_into()
-            .expect("24 kHz 10 ms frame has fixed size");
+        let frame_array: &[f32; FRAME_SIZE_10_MS_24_KHZ] =
+            frame.try_into().expect("24 kHz 10 ms frame has fixed size");
         let is_silence = self
             .features_extractor
             .check_silence_compute_features(frame_array, &mut feature_vector);
@@ -133,7 +134,9 @@ impl VoiceActivityDetectorWrapper {
             self.time_to_vad_reset = self.vad_reset_period_frames;
         }
 
-        let first_channel = frame.first().expect("frame must contain at least one channel");
+        let first_channel = frame
+            .first()
+            .expect("frame must contain at least one channel");
         assert_eq!(first_channel.len(), self.frame_size);
         self.resampler
             .resample_f32(first_channel, &mut self.resampled_buffer);
@@ -149,8 +152,7 @@ mod tests {
 
     const NUM_FRAMES_PER_SECOND: usize = 100;
     const SAMPLE_RATE_8_KHZ: usize = 8000;
-    const NO_VAD_PERIODIC_RESET_MS: usize =
-        FRAME_DURATION_MS * (usize::MAX / FRAME_DURATION_MS);
+    const NO_VAD_PERIODIC_RESET_MS: usize = FRAME_DURATION_MS * (usize::MAX / FRAME_DURATION_MS);
 
     #[derive(Default)]
     struct MockVadState {
@@ -306,7 +308,10 @@ mod tests {
                     .analyzed_frame_sizes
                     .first()
                     .expect("analyze should be called once");
-                assert_eq!(vad_sample_rate_hz / NUM_FRAMES_PER_SECOND, analyzed_frame_size);
+                assert_eq!(
+                    vad_sample_rate_hz / NUM_FRAMES_PER_SECOND,
+                    analyzed_frame_size
+                );
             }
         }
     }

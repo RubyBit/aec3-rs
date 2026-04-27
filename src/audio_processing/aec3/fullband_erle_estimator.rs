@@ -11,7 +11,6 @@ const POINTS_TO_ACCUMULATE: i32 = 6;
 
 pub struct FullBandErleEstimator {
     min_erle_log2: f32,
-    max_erle_lf_log2: f32,
     hold_counters_time_domain: Vec<i32>,
     erle_time_domain_log2: Vec<f32>,
     instantaneous_erle: Vec<ErleInstantaneous>,
@@ -21,10 +20,8 @@ pub struct FullBandErleEstimator {
 impl FullBandErleEstimator {
     pub fn new(config: &ErleConfig, num_capture_channels: usize) -> Self {
         let min_erle_log2 = fast_approx_log2f(config.min + EPSILON);
-        let max_erle_lf_log2 = fast_approx_log2f(config.max_l + EPSILON);
         let mut estimator = Self {
             min_erle_log2,
-            max_erle_lf_log2,
             hold_counters_time_domain: vec![0; num_capture_channels],
             erle_time_domain_log2: vec![min_erle_log2; num_capture_channels],
             instantaneous_erle: vec![ErleInstantaneous::new(config); num_capture_channels],
@@ -68,19 +65,15 @@ impl FullBandErleEstimator {
                         self.hold_counters_time_domain[ch] = BLOCKS_TO_HOLD_ERLE;
                         if let Some(inst_erle) = self.instantaneous_erle[ch].inst_erle_log2() {
                             self.erle_time_domain_log2[ch] +=
-                                0.1 * (inst_erle - self.erle_time_domain_log2[ch]);
-                            self.erle_time_domain_log2[ch] = self.erle_time_domain_log2[ch]
-                                .clamp(self.min_erle_log2, self.max_erle_lf_log2);
+                                0.05 * (inst_erle - self.erle_time_domain_log2[ch]);
+                            self.erle_time_domain_log2[ch] =
+                                self.erle_time_domain_log2[ch].max(self.min_erle_log2);
                         }
                     }
                 }
             }
 
             self.hold_counters_time_domain[ch] -= 1;
-            if self.hold_counters_time_domain[ch] <= 0 {
-                self.erle_time_domain_log2[ch] =
-                    (self.erle_time_domain_log2[ch] - 0.044).max(self.min_erle_log2);
-            }
             if self.hold_counters_time_domain[ch] == 0 {
                 self.instantaneous_erle[ch].reset_accumulators();
             }

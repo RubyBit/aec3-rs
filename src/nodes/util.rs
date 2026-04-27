@@ -58,8 +58,11 @@ pub(crate) struct ChunkIo {
 
 impl ChunkIo {
     pub(crate) fn new(format: AudioFormat, buffer_sample_rate_hz: usize) -> Self {
-        let stream_config =
-            StreamConfig::new(format.sample_rate_hz as usize, format.channels as usize, false);
+        let stream_config = StreamConfig::new(
+            format.sample_rate_hz as usize,
+            format.channels as usize,
+            false,
+        );
         let audio_buffer = AudioBuffer::from_sample_rates(
             format.sample_rate_hz as usize,
             format.channels as usize,
@@ -182,7 +185,11 @@ impl AudioAdapter {
         }
     }
 
-    pub(crate) fn process(&mut self, input: &AudioChunk, output: &mut AudioChunk) -> GraphResult<()> {
+    pub(crate) fn process(
+        &mut self,
+        input: &AudioChunk,
+        output: &mut AudioChunk,
+    ) -> GraphResult<()> {
         if input.format != self.input_format || output.format != self.output_format {
             return Err(GraphError::NodeError(
                 "audio adapter received an unexpected format".to_string(),
@@ -200,7 +207,8 @@ impl AudioAdapter {
             .iter()
             .map(|channel| &channel[..self.input_stream_config.num_frames()])
             .collect();
-        self.audio_buffer.copy_from(&refs, &self.input_stream_config);
+        self.audio_buffer
+            .copy_from(&refs, &self.input_stream_config);
 
         let frame_samples = self.output_stream_config.num_frames();
         let mut output_refs: Vec<&mut [f32]> = self

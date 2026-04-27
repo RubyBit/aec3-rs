@@ -159,7 +159,10 @@ mod tests {
             assert!(s_b.is_finite(), "frame={frame_idx}, s_b={s_b}");
 
             assert_eq!(p_a, p_b, "frame={frame_idx}");
-            assert!((s_a - s_b).abs() < 1e-6, "frame={frame_idx}, s_a={s_a}, s_b={s_b}");
+            assert!(
+                (s_a - s_b).abs() < 1e-6,
+                "frame={frame_idx}, s_a={s_a}, s_b={s_b}"
+            );
         }
     }
 

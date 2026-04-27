@@ -81,6 +81,9 @@ mod tests {
             "SSE2_AVX2_NEON",
             AvailableCpuFeatures::new(true, true, true).to_string()
         );
-        assert_eq!("AVX2", AvailableCpuFeatures::new(false, true, false).to_string());
+        assert_eq!(
+            "AVX2",
+            AvailableCpuFeatures::new(false, true, false).to_string()
+        );
     }
 }

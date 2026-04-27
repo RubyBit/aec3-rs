@@ -68,13 +68,7 @@ fn main() -> Result<()> {
     let (tx_output, rx_output) = bounded::<Vec<f32>>(16);
 
     thread::spawn(move || {
-        processing_thread(
-            rx_capture,
-            rx_render,
-            tx_output,
-            sample_rate_hz,
-            channels,
-        )
+        processing_thread(rx_capture, rx_render, tx_output, sample_rate_hz, channels)
     });
 
     let in_config = cpal::StreamConfig {

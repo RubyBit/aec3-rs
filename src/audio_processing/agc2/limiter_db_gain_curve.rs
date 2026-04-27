@@ -167,7 +167,8 @@ impl LimiterDbGainCurve {
     pub fn get_gain_integral_linear(&self, x0: f64, x1: f64) -> f64 {
         assert!(x0 <= x1);
         assert!(x0 >= self.limiter_start_linear);
-        let limiter_integral = |x: f64| self.gain_curve_limiter_i2 * x.powf(self.gain_curve_limiter_i1);
+        let limiter_integral =
+            |x: f64| self.gain_curve_limiter_i2 * x.powf(self.gain_curve_limiter_i1);
         limiter_integral(x1) - limiter_integral(x0)
     }
 

@@ -3,8 +3,8 @@
 
 pub mod fast_math;
 pub mod histograms;
-pub mod noise_suppressor;
 pub mod noise_estimator;
+pub mod noise_suppressor;
 pub mod ns_common;
 pub mod ns_config;
 pub mod ns_fft;

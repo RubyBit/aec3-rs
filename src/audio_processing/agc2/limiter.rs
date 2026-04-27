@@ -58,7 +58,8 @@ impl Limiter {
 
     pub fn set_samples_per_channel(&mut self, samples_per_channel: usize) {
         assert!(samples_per_channel <= MAXIMAL_NUMBER_OF_SAMPLES_PER_CHANNEL);
-        self.level_estimator.set_samples_per_channel(samples_per_channel);
+        self.level_estimator
+            .set_samples_per_channel(samples_per_channel);
     }
 
     pub fn reset(&mut self) {
@@ -102,7 +103,8 @@ fn compute_per_sample_subframe_factors(
         let scaling_end = scaling_factors[i + 1];
         let scaling_diff = (scaling_end - scaling_start) / subframe_size as f32;
         for j in 0..subframe_size {
-            per_sample_scaling_factors[subframe_start + j] = scaling_start + scaling_diff * j as f32;
+            per_sample_scaling_factors[subframe_start + j] =
+                scaling_start + scaling_diff * j as f32;
         }
     }
 }
@@ -146,9 +148,9 @@ mod tests {
     #[test]
     fn output_volume_above_threshold() {
         const SAMPLES_PER_CHANNEL: usize = 480;
-        let input_level =
-            (MAX_ABS_FLOAT_S16_VALUE + dbfs_to_float_s16(LIMITER_MAX_INPUT_LEVEL_DBFS as f32))
-                / 2.0;
+        let input_level = (MAX_ABS_FLOAT_S16_VALUE
+            + dbfs_to_float_s16(LIMITER_MAX_INPUT_LEVEL_DBFS as f32))
+            / 2.0;
         let mut limiter = Limiter::new(SAMPLES_PER_CHANNEL);
 
         let mut frame = VectorFloatFrame::new(1, SAMPLES_PER_CHANNEL, input_level);

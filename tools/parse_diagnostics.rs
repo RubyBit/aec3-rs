@@ -14,8 +14,12 @@ enum DiagnosticLevel {
 
 #[derive(Debug, Serialize, Deserialize)]
 enum DiagnosticRecord {
-    Header { version: u32 },
-    NewSet { set_index: u64 },
+    Header {
+        version: u32,
+    },
+    NewSet {
+        set_index: u64,
+    },
     RawF32 {
         level: DiagnosticLevel,
         set_index: u64,
@@ -158,7 +162,10 @@ fn format_slice<T: std::fmt::Display>(slice: &[T], is_zero: impl Fn(&T) -> bool)
     }
 
     let first_four: Vec<_> = slice[..4].iter().map(|v| v.to_string()).collect();
-    let last_four: Vec<_> = slice[slice.len() - 4..].iter().map(|v| v.to_string()).collect();
+    let last_four: Vec<_> = slice[slice.len() - 4..]
+        .iter()
+        .map(|v| v.to_string())
+        .collect();
 
     format!(
         "[{}, ..., {}, len={}]",

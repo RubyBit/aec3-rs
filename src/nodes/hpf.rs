@@ -89,7 +89,10 @@ impl NodeFactory for HighPassFactory {
         Ok(())
     }
 
-    fn build(self: Box<Self>, _ctx: &mut crate::graph::BuildCtx) -> GraphResult<Box<dyn NodeRunner>> {
+    fn build(
+        self: Box<Self>,
+        _ctx: &mut crate::graph::BuildCtx,
+    ) -> GraphResult<Box<dyn NodeRunner>> {
         let internal_rate = internal_sample_rate(self.format, None);
         Ok(Box::new(HighPassRunner {
             audio_in: self.audio_in,

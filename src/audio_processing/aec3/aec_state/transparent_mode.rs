@@ -305,12 +305,10 @@ mod tests {
         // transparent mode should increase and eventually activate.
         for _ in 0..1000 {
             mode.update(
-                /* filter_delay_blocks */ 0,
-                /* any_filter_consistent */ false,
+                /* filter_delay_blocks */ 0, /* any_filter_consistent */ false,
                 /* any_filter_converged */ false,
                 /* any_coarse_filter_converged */ false,
-                /* all_filters_diverged */ false,
-                /* active_render */ true,
+                /* all_filters_diverged */ false, /* active_render */ true,
                 /* saturated_capture */ false,
             );
         }

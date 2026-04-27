@@ -3,7 +3,7 @@
 use std::cmp::{max, min};
 
 use crate::audio_processing::agc2::clipping_predictor::{
-    create_clipping_predictor, ClippingPredictor, ClippingPredictorConfig, ClippingPredictorMode,
+    ClippingPredictor, ClippingPredictorConfig, ClippingPredictorMode, create_clipping_predictor,
 };
 use crate::audio_processing::agc2::input_volume_stats_reporter::update_histogram_on_recommended_input_volume_change_to_match_target;
 use crate::audio_processing::audio_buffer::AudioBuffer;
@@ -48,18 +48,17 @@ impl Default for Config {
 }
 
 const GAIN_MAP: [i32; 256] = [
-    -56, -54, -52, -50, -48, -47, -45, -43, -42, -40, -38, -37, -35, -34, -33, -31, -30, -29,
-    -27, -26, -25, -24, -23, -22, -20, -19, -18, -17, -16, -15, -14, -14, -13, -12, -11, -10,
-    -9, -8, -8, -7, -6, -5, -5, -4, -3, -2, -2, -1, 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6, 6,
-    7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 15, 16, 16, 17, 17,
-    17, 18, 18, 18, 19, 19, 19, 20, 20, 21, 21, 21, 22, 22, 22, 23, 23, 23, 24, 24, 24, 24, 25,
-    25, 25, 26, 26, 26, 27, 27, 27, 28, 28, 28, 28, 29, 29, 29, 30, 30, 30, 30, 31, 31, 31, 32,
-    32, 32, 32, 33, 33, 33, 33, 34, 34, 34, 35, 35, 35, 35, 36, 36, 36, 36, 37, 37, 37, 38, 38,
-    38, 38, 39, 39, 39, 39, 40, 40, 40, 40, 41, 41, 41, 41, 42, 42, 42, 42, 43, 43, 43, 44, 44,
-    44, 44, 45, 45, 45, 45, 46, 46, 46, 46, 47, 47, 47, 47, 48, 48, 48, 48, 49, 49, 49, 49, 50,
-    50, 50, 50, 51, 51, 51, 51, 52, 52, 52, 52, 53, 53, 53, 53, 54, 54, 54, 54, 55, 55, 55, 55,
-    56, 56, 56, 56, 57, 57, 57, 57, 58, 58, 58, 58, 59, 59, 59, 59, 60, 60, 60, 60, 61, 61, 61,
-    61, 62, 62, 62, 62, 63, 63, 63, 63, 64,
+    -56, -54, -52, -50, -48, -47, -45, -43, -42, -40, -38, -37, -35, -34, -33, -31, -30, -29, -27,
+    -26, -25, -24, -23, -22, -20, -19, -18, -17, -16, -15, -14, -14, -13, -12, -11, -10, -9, -8,
+    -8, -7, -6, -5, -5, -4, -3, -2, -2, -1, 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9,
+    9, 10, 10, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 15, 16, 16, 17, 17, 17, 18, 18, 18, 19,
+    19, 19, 20, 20, 21, 21, 21, 22, 22, 22, 23, 23, 23, 24, 24, 24, 24, 25, 25, 25, 26, 26, 26, 27,
+    27, 27, 28, 28, 28, 28, 29, 29, 29, 30, 30, 30, 30, 31, 31, 31, 32, 32, 32, 32, 33, 33, 33, 33,
+    34, 34, 34, 35, 35, 35, 35, 36, 36, 36, 36, 37, 37, 37, 38, 38, 38, 38, 39, 39, 39, 39, 40, 40,
+    40, 40, 41, 41, 41, 41, 42, 42, 42, 42, 43, 43, 43, 44, 44, 44, 44, 45, 45, 45, 45, 46, 46, 46,
+    46, 47, 47, 47, 47, 48, 48, 48, 48, 49, 49, 49, 49, 50, 50, 50, 50, 51, 51, 51, 51, 52, 52, 52,
+    52, 53, 53, 53, 53, 54, 54, 54, 54, 55, 55, 55, 55, 56, 56, 56, 56, 57, 57, 57, 57, 58, 58, 58,
+    58, 59, 59, 59, 59, 60, 60, 60, 60, 61, 61, 61, 61, 62, 62, 62, 62, 63, 63, 63, 63, 64,
 ];
 
 fn compute_volume_update(gain_error_db: i32, input_volume: i32, min_input_volume: i32) -> i32 {
@@ -252,8 +251,7 @@ impl MonoInputVolumeController {
         }
 
         if applied_input_volume > self.last_recommended_input_volume + VOLUME_QUANTIZATION_SLACK
-            || applied_input_volume
-                < self.last_recommended_input_volume - VOLUME_QUANTIZATION_SLACK
+            || applied_input_volume < self.last_recommended_input_volume - VOLUME_QUANTIZATION_SLACK
         {
             self.last_recommended_input_volume = applied_input_volume;
             if self.last_recommended_input_volume > self.max_input_volume {
@@ -554,7 +552,11 @@ mod tests {
         )
     }
 
-    fn write_audio_buffer_samples(samples_value: f32, clipped_ratio: f32, audio_buffer: &mut AudioBuffer) {
+    fn write_audio_buffer_samples(
+        samples_value: f32,
+        clipped_ratio: f32,
+        audio_buffer: &mut AudioBuffer,
+    ) {
         assert!(clipped_ratio >= 0.0 && clipped_ratio <= 1.0);
         let num_samples = audio_buffer.num_frames();
         let num_clipping_samples = (clipped_ratio * num_samples as f32) as usize;
@@ -645,7 +647,10 @@ mod tests {
         rms_error_dbfs: Option<i32>,
     ) -> i32 {
         mono_controller.set_stream_analog_level(applied_input_volume);
-        assert_eq!(mono_controller.recommended_analog_level(), applied_input_volume);
+        assert_eq!(
+            mono_controller.recommended_analog_level(),
+            applied_input_volume
+        );
         mono_controller.process(rms_error_dbfs, speech_probability);
         mono_controller.recommended_analog_level()
     }
@@ -674,12 +679,7 @@ mod tests {
         let mut mono_controller = MonoInputVolumeController::new(70, 32, 3, 0.7, 0.8);
         mono_controller.initialize();
 
-        update_recommended_input_volume(
-            &mut mono_controller,
-            INITIAL_INPUT_VOLUME,
-            0.1,
-            Some(-10),
-        );
+        update_recommended_input_volume(&mut mono_controller, INITIAL_INPUT_VOLUME, 0.1, Some(-10));
         mono_controller.handle_clipping(INPUT_VOLUME_STEP);
 
         assert_eq!(
@@ -740,7 +740,8 @@ mod tests {
             0.7,
             Some(-14),
         );
-        volume_1 = update_recommended_input_volume(&mut mono_controller_1, volume_1, 0.7, Some(-14));
+        volume_1 =
+            update_recommended_input_volume(&mut mono_controller_1, volume_1, 0.7, Some(-14));
 
         let mut volume_2 = update_recommended_input_volume(
             &mut mono_controller_2,
@@ -754,8 +755,10 @@ mod tests {
             0.7,
             Some(-30),
         );
-        volume_2 = update_recommended_input_volume(&mut mono_controller_2, volume_2, 0.7, Some(-15));
-        volume_3 = update_recommended_input_volume(&mut mono_controller_3, volume_3, 0.7, Some(-30));
+        volume_2 =
+            update_recommended_input_volume(&mut mono_controller_2, volume_2, 0.7, Some(-15));
+        volume_3 =
+            update_recommended_input_volume(&mut mono_controller_3, volume_3, 0.7, Some(-30));
 
         assert!(volume_1 < INITIAL_INPUT_VOLUME);
         assert!(volume_2 < volume_1);
@@ -804,24 +807,39 @@ mod tests {
     fn check_clipped_level_min_is_effective() {
         const INITIAL_INPUT_VOLUME: i32 = 100;
         const CLIPPED_LEVEL_MIN: i32 = 70;
-        let mut mono_controller_1 = MonoInputVolumeController::new(CLIPPED_LEVEL_MIN, 84, 2, 0.7, 0.8);
-        let mut mono_controller_2 = MonoInputVolumeController::new(CLIPPED_LEVEL_MIN, 84, 2, 0.7, 0.8);
+        let mut mono_controller_1 =
+            MonoInputVolumeController::new(CLIPPED_LEVEL_MIN, 84, 2, 0.7, 0.8);
+        let mut mono_controller_2 =
+            MonoInputVolumeController::new(CLIPPED_LEVEL_MIN, 84, 2, 0.7, 0.8);
         mono_controller_1.initialize();
         mono_controller_2.initialize();
 
         assert_eq!(
-            update_recommended_input_volume(&mut mono_controller_1, INITIAL_INPUT_VOLUME, 0.1, Some(-10)),
+            update_recommended_input_volume(
+                &mut mono_controller_1,
+                INITIAL_INPUT_VOLUME,
+                0.1,
+                Some(-10)
+            ),
             INITIAL_INPUT_VOLUME
         );
         assert_eq!(
-            update_recommended_input_volume(&mut mono_controller_2, INITIAL_INPUT_VOLUME, 0.1, Some(-10)),
+            update_recommended_input_volume(
+                &mut mono_controller_2,
+                INITIAL_INPUT_VOLUME,
+                0.1,
+                Some(-10)
+            ),
             INITIAL_INPUT_VOLUME
         );
 
         mono_controller_1.handle_clipping(29);
         mono_controller_2.handle_clipping(31);
 
-        assert_eq!(mono_controller_2.recommended_analog_level(), CLIPPED_LEVEL_MIN);
+        assert_eq!(
+            mono_controller_2.recommended_analog_level(),
+            CLIPPED_LEVEL_MIN
+        );
         assert!(
             mono_controller_2.recommended_analog_level()
                 < mono_controller_1.recommended_analog_level()
@@ -853,7 +871,8 @@ mod tests {
         assert_eq!(volume_2, INITIAL_INPUT_VOLUME);
 
         volume_1 = update_recommended_input_volume(&mut mono_controller_1, volume_1, 0.7, None);
-        volume_2 = update_recommended_input_volume(&mut mono_controller_2, volume_2, 0.7, Some(-10));
+        volume_2 =
+            update_recommended_input_volume(&mut mono_controller_2, volume_2, 0.7, Some(-10));
 
         assert_eq!(volume_1, INITIAL_INPUT_VOLUME);
         assert!(volume_2 < volume_1);
@@ -919,7 +938,10 @@ mod tests {
             1,
         );
 
-        assert_eq!(controller.recommended_input_volume(), DEFAULT_INITIAL_INPUT_VOLUME);
+        assert_eq!(
+            controller.recommended_input_volume(),
+            DEFAULT_INITIAL_INPUT_VOLUME
+        );
     }
 
     #[test]
@@ -1067,8 +1089,9 @@ mod tests {
             let mut audio_buffer = create_audio_buffer();
             write_audio_buffer_samples(0.0, 0.0, &mut audio_buffer);
 
-            let volume = call_agc_sequence(&mut controller, &audio_buffer, 128, 0.9, Some(-80.0), 1)
-                .expect("volume expected");
+            let volume =
+                call_agc_sequence(&mut controller, &audio_buffer, 128, 0.9, Some(-80.0), 1)
+                    .expect("volume expected");
             assert_eq!(volume, 128);
         }
     }
@@ -2075,13 +2098,41 @@ mod tests {
         assert_eq!(volume_1, input_volume);
         assert_eq!(volume_2, input_volume);
 
-        volume_1 = feed_frames(&mut controller_1, &audio_buffer, 2, volume_1, 0.4, Some(-42.0));
-        volume_2 = feed_frames(&mut controller_2, &audio_buffer, 2, volume_2, 0.4, Some(-42.0));
+        volume_1 = feed_frames(
+            &mut controller_1,
+            &audio_buffer,
+            2,
+            volume_1,
+            0.4,
+            Some(-42.0),
+        );
+        volume_2 = feed_frames(
+            &mut controller_2,
+            &audio_buffer,
+            2,
+            volume_2,
+            0.4,
+            Some(-42.0),
+        );
         assert_eq!(volume_1, input_volume);
         assert_eq!(volume_2, input_volume);
 
-        volume_1 = feed_frames(&mut controller_1, &audio_buffer, 7, volume_1, 0.7, Some(-42.0));
-        volume_2 = feed_frames(&mut controller_2, &audio_buffer, 7, volume_2, 0.7, Some(-42.0));
+        volume_1 = feed_frames(
+            &mut controller_1,
+            &audio_buffer,
+            7,
+            volume_1,
+            0.7,
+            Some(-42.0),
+        );
+        volume_2 = feed_frames(
+            &mut controller_2,
+            &audio_buffer,
+            7,
+            volume_2,
+            0.7,
+            Some(-42.0),
+        );
 
         assert!(volume_1 > input_volume);
         assert_eq!(volume_2, input_volume);
@@ -2412,8 +2463,16 @@ mod tests {
         )
         .expect("volume expected");
 
-        write_audio_buffer_samples(CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16, 0.0, &mut audio_buffer_1);
-        write_audio_buffer_samples(CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16, 0.0, &mut audio_buffer_2);
+        write_audio_buffer_samples(
+            CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16,
+            0.0,
+            &mut audio_buffer_1,
+        );
+        write_audio_buffer_samples(
+            CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16,
+            0.0,
+            &mut audio_buffer_2,
+        );
         volume_1 = call_agc_sequence(
             &mut controller_1,
             &audio_buffer_1,
@@ -2464,8 +2523,16 @@ mod tests {
             )
             .expect("volume expected");
 
-            write_audio_buffer_samples(CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16, 0.0, &mut audio_buffer_1);
-            write_audio_buffer_samples(CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16, 0.0, &mut audio_buffer_2);
+            write_audio_buffer_samples(
+                CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16,
+                0.0,
+                &mut audio_buffer_1,
+            );
+            write_audio_buffer_samples(
+                CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16,
+                0.0,
+                &mut audio_buffer_2,
+            );
             volume_1 = call_agc_sequence(
                 &mut controller_1,
                 &audio_buffer_1,
@@ -2516,8 +2583,16 @@ mod tests {
         )
         .expect("volume expected");
 
-        write_audio_buffer_samples(CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16, 0.0, &mut audio_buffer_1);
-        write_audio_buffer_samples(CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16, 0.0, &mut audio_buffer_2);
+        write_audio_buffer_samples(
+            CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16,
+            0.0,
+            &mut audio_buffer_1,
+        );
+        write_audio_buffer_samples(
+            CLOSE_TO_CLIPPING_PEAK_RATIO * MAX_SAMPLE_S16,
+            0.0,
+            &mut audio_buffer_2,
+        );
         volume_1 = call_agc_sequence(
             &mut controller_1,
             &audio_buffer_1,

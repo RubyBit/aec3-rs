@@ -237,10 +237,16 @@ impl Subtractor {
                 .compute_frequency_response(&mut self.main_frequency_responses[ch]);
 
             if ch == 0 {
-                self.data_dumper
-                    .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_subtractor_G_main", &g.re);
-                self.data_dumper
-                    .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_subtractor_G_main", &g.im);
+                self.data_dumper.dump_raw_f32_slice(
+                    DiagnosticLevel::DeepDebug,
+                    "aec3_subtractor_G_main",
+                    &g.re,
+                );
+                self.data_dumper.dump_raw_f32_slice(
+                    DiagnosticLevel::DeepDebug,
+                    "aec3_subtractor_G_main",
+                    &g.im,
+                );
             }
 
             if output.e2_main < output.e2_shadow {
@@ -284,18 +290,16 @@ impl Subtractor {
             self.shadow_filters[ch].adapt(render_buffer, &g);
 
             if ch == 0 {
-                self.data_dumper
-                    .dump_raw_f32_slice(
-                        DiagnosticLevel::DeepDebug,
-                        "aec3_subtractor_G_shadow",
-                        &g.re,
-                    );
-                self.data_dumper
-                    .dump_raw_f32_slice(
-                        DiagnosticLevel::DeepDebug,
-                        "aec3_subtractor_G_shadow",
-                        &g.im,
-                    );
+                self.data_dumper.dump_raw_f32_slice(
+                    DiagnosticLevel::DeepDebug,
+                    "aec3_subtractor_G_shadow",
+                    &g.re,
+                );
+                self.data_dumper.dump_raw_f32_slice(
+                    DiagnosticLevel::DeepDebug,
+                    "aec3_subtractor_G_shadow",
+                    &g.im,
+                );
                 self.filter_misadjustment_estimators[ch].dump(&self.data_dumper);
                 self.dump_filters();
             }
@@ -372,26 +376,27 @@ impl Subtractor {
             return;
         }
         if let Some(response) = self.main_impulse_responses.first() {
-            self.data_dumper
-                .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_subtractor_h_main", response);
+            self.data_dumper.dump_raw_f32_slice(
+                DiagnosticLevel::DeepDebug,
+                "aec3_subtractor_h_main",
+                response,
+            );
         }
         let filters = self.main_filters[0].get_filter();
         for partition in filters {
             if partition.is_empty() {
                 continue;
             }
-            self.data_dumper
-                .dump_raw_f32_slice(
-                    DiagnosticLevel::DeepDebug,
-                    "aec3_subtractor_H_main",
-                    &partition[0].re,
-                );
-            self.data_dumper
-                .dump_raw_f32_slice(
-                    DiagnosticLevel::DeepDebug,
-                    "aec3_subtractor_H_main",
-                    &partition[0].im,
-                );
+            self.data_dumper.dump_raw_f32_slice(
+                DiagnosticLevel::DeepDebug,
+                "aec3_subtractor_H_main",
+                &partition[0].re,
+            );
+            self.data_dumper.dump_raw_f32_slice(
+                DiagnosticLevel::DeepDebug,
+                "aec3_subtractor_H_main",
+                &partition[0].im,
+            );
         }
     }
 }

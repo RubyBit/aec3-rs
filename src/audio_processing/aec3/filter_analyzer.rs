@@ -119,12 +119,11 @@ impl FilterAnalyzer {
 
     fn analyze_region(&mut self, filters_time_domain: &[Vec<f32>], render_buffer: &RenderBuffer) {
         self.pre_process_filters(filters_time_domain);
-        self.data_dumper
-            .dump_raw_f32_slice(
-                DiagnosticLevel::DeepDebug,
-                "aec3_linear_filter_processed_td",
-                &self.h_highpass[0],
-            );
+        self.data_dumper.dump_raw_f32_slice(
+            DiagnosticLevel::DeepDebug,
+            "aec3_linear_filter_processed_td",
+            &self.h_highpass[0],
+        );
 
         for (ch, ((state, h_hp), filter)) in self
             .filter_analysis_states

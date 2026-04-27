@@ -40,12 +40,11 @@ impl StationarityEstimator {
             return;
         }
         self.noise.update(spectrum);
-        self.data_dumper
-            .dump_raw_f32_slice(
-                DiagnosticLevel::DeepDebug,
-                "aec3_stationarity_noise_spectrum",
-                self.noise.spectrum(),
-            );
+        self.data_dumper.dump_raw_f32_slice(
+            DiagnosticLevel::DeepDebug,
+            "aec3_stationarity_noise_spectrum",
+            self.noise.spectrum(),
+        );
         self.data_dumper.dump_raw_f32(
             DiagnosticLevel::Production,
             "aec3_stationarity_is_block_stationary",
@@ -116,8 +115,11 @@ impl StationarityEstimator {
         let noise = WINDOW_LENGTH as f32 * self.noise.power(band);
         assert!(noise > 0.0);
         let ratio = accumulated_power / noise;
-        self.data_dumper
-            .dump_raw_f32(DiagnosticLevel::Developer, "aec3_stationarity_long_ratio", ratio);
+        self.data_dumper.dump_raw_f32(
+            DiagnosticLevel::Developer,
+            "aec3_stationarity_long_ratio",
+            ratio,
+        );
         accumulated_power < STATIONARITY_THRESHOLD * noise
     }
 

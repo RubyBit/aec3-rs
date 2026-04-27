@@ -168,7 +168,11 @@ impl NodeSpec for Aec3NodeBuilder {
             graph.register_output::<Aec3Metrics>(node, "metrics_out", OutputOptions::default())
         });
         let diagnostics_out = self.export_diagnostics.then(|| {
-            graph.register_output::<DiagnosticEvent>(node, "diagnostics_out", OutputOptions::default())
+            graph.register_output::<DiagnosticEvent>(
+                node,
+                "diagnostics_out",
+                OutputOptions::default(),
+            )
         });
 
         graph.finish_node(
@@ -231,7 +235,10 @@ impl NodeFactory for Aec3Factory {
         Ok(())
     }
 
-    fn build(self: Box<Self>, _ctx: &mut crate::graph::BuildCtx) -> GraphResult<Box<dyn NodeRunner>> {
+    fn build(
+        self: Box<Self>,
+        _ctx: &mut crate::graph::BuildCtx,
+    ) -> GraphResult<Box<dyn NodeRunner>> {
         maybe_enable_diagnostics(
             self.diagnostics_enabled,
             self.diagnostics_output_dir.as_deref(),
@@ -274,7 +281,9 @@ impl NodeFactory for Aec3Factory {
             diagnostics_out: self.diagnostics_out,
             render_io: ChunkIo::new(self.render_format, internal_rate),
             capture_io: ChunkIo::new(self.capture_format, internal_rate),
-            linear_io: self.linear_out.map(|_| ChunkIo::new(self.linear_format, 16_000)),
+            linear_io: self
+                .linear_out
+                .map(|_| ChunkIo::new(self.linear_format, 16_000)),
             linear_format: self.linear_format,
             echo,
         }))
@@ -397,7 +406,9 @@ impl NodeRunner for Aec3Runner {
             if let Some(render_packet) = ctx.trigger_packet(self.render_in)? {
                 self.render_io
                     .load_chunk(render_packet.payload(), "Aec3Node(render)")?;
-                self.render_io.audio_buffer_mut().split_into_frequency_bands();
+                self.render_io
+                    .audio_buffer_mut()
+                    .split_into_frequency_bands();
                 self.echo.analyze_render(self.render_io.audio_buffer_mut());
                 self.emit_diagnostic(ctx, render_packet.meta().clone(), "render_analyzed")?;
             }
@@ -410,8 +421,11 @@ impl NodeRunner for Aec3Runner {
 
         self.capture_io
             .load_chunk(capture_packet.payload(), "Aec3Node(capture)")?;
-        self.echo.analyze_capture(self.capture_io.audio_buffer_mut());
-        self.capture_io.audio_buffer_mut().split_into_frequency_bands();
+        self.echo
+            .analyze_capture(self.capture_io.audio_buffer_mut());
+        self.capture_io
+            .audio_buffer_mut()
+            .split_into_frequency_bands();
 
         if let (Some(linear_out), Some(linear_io)) = (self.linear_out, self.linear_io.as_mut()) {
             self.echo.process_capture_with_linear_output(

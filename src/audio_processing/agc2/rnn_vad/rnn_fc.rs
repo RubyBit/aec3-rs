@@ -1,8 +1,6 @@
 //! Fully connected (dense) layer used by RNN-VAD.
 
-use crate::audio_processing::agc2::cpu_features::{
-    AvailableCpuFeatures,
-};
+use crate::audio_processing::agc2::cpu_features::AvailableCpuFeatures;
 use crate::audio_processing::agc2::rnn_vad::vector_math::VectorMath;
 use crate::audio_processing::agc2::rnn_vad::weights::rnn_activations::{
     sigmoid_approximated, tansig_approximated,
@@ -99,7 +97,9 @@ impl FullyConnectedLayer {
         for o in 0..self.output_size {
             let row_start = o * self.input_size;
             let row_end = row_start + self.input_size;
-            let weighted_sum = self.vector_math.dot_product(input, &self.weights[row_start..row_end]);
+            let weighted_sum = self
+                .vector_math
+                .dot_product(input, &self.weights[row_start..row_end]);
             self.output[o] = self.apply_activation(self.bias[o] + weighted_sum);
         }
     }
@@ -141,85 +141,25 @@ fn preprocess_weights(weights: &[i8], output_size: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio_processing::agc2::cpu_features::get_available_cpu_features;
     use crate::audio_processing::agc2::cpu_features::no_available_cpu_features;
     use crate::audio_processing::agc2::rnn_vad::test_data::expect_near_absolute;
     use crate::audio_processing::agc2::rnn_vad::weights::rnn_vad_weights::{
-        input_dense_bias, input_dense_weights, INPUT_LAYER_INPUT_SIZE, INPUT_LAYER_OUTPUT_SIZE,
-    };
-    use crate::audio_processing::agc2::cpu_features::{
-        get_available_cpu_features
+        INPUT_LAYER_INPUT_SIZE, INPUT_LAYER_OUTPUT_SIZE, input_dense_bias, input_dense_weights,
     };
 
     const FULLY_CONNECTED_INPUT_VECTOR: [f32; 42] = [
-        -1.00131,
-        -0.627069,
-        -7.81097,
-        7.86285,
-        -2.87145,
-        3.32365,
-        -0.653161,
-        0.529839,
-        -0.425307,
-        0.25583,
-        0.235094,
-        0.230527,
-        -0.144687,
-        0.182785,
-        0.57102,
-        0.125039,
-        0.479482,
-        -0.0255439,
-        -0.0073141,
-        -0.147346,
-        -0.217106,
-        -0.0846906,
-        -8.34943,
-        3.09065,
-        1.42628,
-        -0.85235,
-        -0.220207,
-        -0.811163,
-        2.09032,
-        -2.01425,
-        -0.690268,
-        -0.925327,
-        -0.541354,
-        0.58455,
-        -0.606726,
-        -0.0372358,
-        0.565991,
-        0.435854,
-        0.420812,
-        0.162198,
-        -2.13,
-        10.0089,
+        -1.00131, -0.627069, -7.81097, 7.86285, -2.87145, 3.32365, -0.653161, 0.529839, -0.425307,
+        0.25583, 0.235094, 0.230527, -0.144687, 0.182785, 0.57102, 0.125039, 0.479482, -0.0255439,
+        -0.0073141, -0.147346, -0.217106, -0.0846906, -8.34943, 3.09065, 1.42628, -0.85235,
+        -0.220207, -0.811163, 2.09032, -2.01425, -0.690268, -0.925327, -0.541354, 0.58455,
+        -0.606726, -0.0372358, 0.565991, 0.435854, 0.420812, 0.162198, -2.13, 10.0089,
     ];
 
     const FULLY_CONNECTED_EXPECTED_OUTPUT: [f32; 24] = [
-        -0.623293,
-        -0.988299,
-        0.999378,
-        0.967168,
-        0.103087,
-        -0.978545,
-        -0.856347,
-        0.346675,
-        1.0,
-        -0.717442,
-        -0.544176,
-        0.960363,
-        0.983443,
-        0.999991,
-        -0.824335,
-        0.984742,
-        0.990208,
-        0.938179,
-        0.875092,
-        0.999846,
-        0.997707,
-        -0.999382,
-        0.973153,
-        -0.966605,
+        -0.623293, -0.988299, 0.999378, 0.967168, 0.103087, -0.978545, -0.856347, 0.346675, 1.0,
+        -0.717442, -0.544176, 0.960363, 0.983443, 0.999991, -0.824335, 0.984742, 0.990208,
+        0.938179, 0.875092, 0.999846, 0.997707, -0.999382, 0.973153, -0.966605,
     ];
 
     fn get_cpu_features_to_test() -> Vec<AvailableCpuFeatures> {

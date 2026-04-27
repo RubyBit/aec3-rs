@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use rustfft::{num_complex::Complex32, Fft, FftPlanner};
+use rustfft::{Fft, FftPlanner, num_complex::Complex32};
 
 use super::ns_common::{FFT_SIZE, FFT_SIZE_BY_2_PLUS_1};
 

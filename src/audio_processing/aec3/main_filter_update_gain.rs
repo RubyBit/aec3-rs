@@ -133,8 +133,11 @@ impl MainFilterUpdateGain {
             self.h_error[k] = self.h_error[k].min(self.current_config.error_ceil);
         }
 
-        self.data_dumper
-            .dump_raw_f32_slice(DiagnosticLevel::DeepDebug, "aec3_main_gain_H_error", &self.h_error);
+        self.data_dumper.dump_raw_f32_slice(
+            DiagnosticLevel::DeepDebug,
+            "aec3_main_gain_H_error",
+            &self.h_error,
+        );
     }
 
     fn update_current_config(&mut self) {

@@ -1,15 +1,21 @@
+#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+use crate::audio_processing::aec3::aec3_common::detect_neon;
 use crate::audio_processing::aec3::aec3_common::{
     Aec3Optimization, FFT_LENGTH, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1, get_time_domain_length,
 };
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
 use crate::audio_processing::aec3::aec3_fft::Aec3Fft;
 use crate::audio_processing::aec3::fft_data::FftData;
 use crate::audio_processing::aec3::render_buffer::RenderBuffer;
 use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
-use crate::audio_processing::aec3::aec3_common::detect_neon;
 
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{
+    vaddq_f32, vld1q_f32, vmaxq_f32, vmlaq_f32, vmlsq_f32, vmulq_f32, vst1q_f32,
+};
+#[cfg(target_arch = "arm")]
+use std::arch::arm::{vaddq_f32, vld1q_f32, vmaxq_f32, vmlaq_f32, vmlsq_f32, vmulq_f32, vst1q_f32};
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
     _mm_add_ps, _mm_loadu_ps, _mm_max_ps, _mm_mul_ps, _mm_storeu_ps, _mm_sub_ps, _mm256_add_ps,
@@ -19,14 +25,6 @@ use std::arch::x86::{
 use std::arch::x86_64::{
     _mm_add_ps, _mm_loadu_ps, _mm_max_ps, _mm_mul_ps, _mm_storeu_ps, _mm_sub_ps, _mm256_add_ps,
     _mm256_loadu_ps, _mm256_max_ps, _mm256_mul_ps, _mm256_storeu_ps, _mm256_sub_ps,
-};
-#[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::{
-    vaddq_f32, vld1q_f32, vmaxq_f32, vmlaq_f32, vmlsq_f32, vmulq_f32, vst1q_f32,
-};
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{
-    vaddq_f32, vld1q_f32, vmaxq_f32, vmlaq_f32, vmlsq_f32, vmulq_f32, vst1q_f32,
 };
 
 /// Computes and stores the frequency response of the filter.
@@ -831,7 +829,9 @@ impl AdaptiveFirFilter {
             Aec3Optimization::Neon => {
                 apply_filter_neon(render_buffer, self.current_size_partitions, &self.h, s)
             }
-            Aec3Optimization::None => apply_filter(render_buffer, self.current_size_partitions, &self.h, s),
+            Aec3Optimization::None => {
+                apply_filter(render_buffer, self.current_size_partitions, &self.h, s)
+            }
         }
     }
 
@@ -864,7 +864,9 @@ impl AdaptiveFirFilter {
             Aec3Optimization::Neon => {
                 compute_frequency_response_neon(self.current_size_partitions, &self.h, h2)
             }
-            Aec3Optimization::None => compute_frequency_response(self.current_size_partitions, &self.h, h2),
+            Aec3Optimization::None => {
+                compute_frequency_response(self.current_size_partitions, &self.h, h2)
+            }
         }
     }
 
@@ -908,7 +910,9 @@ impl AdaptiveFirFilter {
             Aec3Optimization::Neon => {
                 adapt_partitions_neon(render_buffer, g, self.current_size_partitions, &mut self.h)
             }
-            Aec3Optimization::None => adapt_partitions(render_buffer, g, self.current_size_partitions, &mut self.h),
+            Aec3Optimization::None => {
+                adapt_partitions(render_buffer, g, self.current_size_partitions, &mut self.h)
+            }
         }
     }
 
@@ -1039,8 +1043,8 @@ mod tests {
     use crate::audio_processing::aec3::fft_buffer::FftBuffer;
     use crate::audio_processing::aec3::render_delay_buffer::RenderDelayBuffer;
     use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
-    use crate::audio_processing::aec3::spectrum_buffer::SpectrumBuffer;
     use crate::audio_processing::aec3::shadow_filter_update_gain::ShadowFilterUpdateGain;
+    use crate::audio_processing::aec3::spectrum_buffer::SpectrumBuffer;
     use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
     use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
     use crate::audio_processing::utility::cascaded_biquad_filter::{
@@ -1134,7 +1138,12 @@ mod tests {
         let mut expected_adapted = initial_h.clone();
         adapt_partitions(&render_buffer, &g, NUM_PARTITIONS, &mut expected_adapted);
         let mut expected_filtered = FftData::default();
-        apply_filter(&render_buffer, NUM_PARTITIONS, &initial_h, &mut expected_filtered);
+        apply_filter(
+            &render_buffer,
+            NUM_PARTITIONS,
+            &initial_h,
+            &mut expected_filtered,
+        );
 
         for optimization in [
             Aec3Optimization::Sse2,
@@ -1154,7 +1163,10 @@ mod tests {
                 }
                 Aec3Optimization::None => unreachable!(),
             }
-            assert_eq!(expected_h2, actual_h2, "frequency response mismatch for {optimization:?}");
+            assert_eq!(
+                expected_h2, actual_h2,
+                "frequency response mismatch for {optimization:?}"
+            );
 
             let mut actual_adapted = initial_h.clone();
             match optimization {
@@ -1169,19 +1181,31 @@ mod tests {
                 }
                 Aec3Optimization::None => unreachable!(),
             }
-            assert_eq!(expected_adapted, actual_adapted, "adapt mismatch for {optimization:?}");
+            assert_eq!(
+                expected_adapted, actual_adapted,
+                "adapt mismatch for {optimization:?}"
+            );
 
             let mut actual_filtered = FftData::default();
             match optimization {
-                Aec3Optimization::Sse2 => {
-                    apply_filter_sse2(&render_buffer, NUM_PARTITIONS, &initial_h, &mut actual_filtered)
-                }
-                Aec3Optimization::Avx2 => {
-                    apply_filter_avx2(&render_buffer, NUM_PARTITIONS, &initial_h, &mut actual_filtered)
-                }
-                Aec3Optimization::Neon => {
-                    apply_filter_neon(&render_buffer, NUM_PARTITIONS, &initial_h, &mut actual_filtered)
-                }
+                Aec3Optimization::Sse2 => apply_filter_sse2(
+                    &render_buffer,
+                    NUM_PARTITIONS,
+                    &initial_h,
+                    &mut actual_filtered,
+                ),
+                Aec3Optimization::Avx2 => apply_filter_avx2(
+                    &render_buffer,
+                    NUM_PARTITIONS,
+                    &initial_h,
+                    &mut actual_filtered,
+                ),
+                Aec3Optimization::Neon => apply_filter_neon(
+                    &render_buffer,
+                    NUM_PARTITIONS,
+                    &initial_h,
+                    &mut actual_filtered,
+                ),
                 Aec3Optimization::None => unreachable!(),
             }
             assert_fft_data_close(&actual_filtered, &expected_filtered, 1e-5);

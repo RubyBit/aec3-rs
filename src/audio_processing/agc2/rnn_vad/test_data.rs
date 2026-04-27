@@ -196,6 +196,9 @@ mod tests {
             REFINE_NUM_LAGS_24_KHZ,
             test_data.square_energies_24khz_view().len()
         );
-        assert_eq!(NUM_LAGS_12_KHZ, test_data.auto_correlation_12khz_view().len());
+        assert_eq!(
+            NUM_LAGS_12_KHZ,
+            test_data.auto_correlation_12khz_view().len()
+        );
     }
 }

@@ -22,7 +22,7 @@ impl Default for DiagnosticLevel {
 #[cfg(feature = "diagnostics")]
 mod diagnostics {
     use std::collections::HashMap;
-    use std::fs::{create_dir_all, File, OpenOptions};
+    use std::fs::{File, OpenOptions, create_dir_all};
     use std::io::{BufWriter, Write};
     use std::path::{Path, PathBuf};
     use std::sync::{Mutex, OnceLock};
@@ -32,8 +32,12 @@ mod diagnostics {
 
     #[derive(Debug, Serialize, Deserialize)]
     pub enum DiagnosticRecord {
-        Header { version: u32 },
-        NewSet { set_index: u64 },
+        Header {
+            version: u32,
+        },
+        NewSet {
+            set_index: u64,
+        },
         RawF32 {
             level: DiagnosticLevel,
             set_index: u64,
@@ -154,7 +158,10 @@ mod diagnostics {
         STATE.get_or_init(|| Mutex::new(LoggerState::new()))
     }
 
-    fn write_record(writer: &mut BufWriter<File>, record: &DiagnosticRecord) -> std::io::Result<()> {
+    fn write_record(
+        writer: &mut BufWriter<File>,
+        record: &DiagnosticRecord,
+    ) -> std::io::Result<()> {
         let bytes = postcard::to_allocvec(record).map_err(|err| {
             std::io::Error::new(std::io::ErrorKind::Other, format!("postcard encode: {err}"))
         })?;
@@ -250,13 +257,16 @@ mod diagnostics {
             return;
         }
         let set_index = state.set_index;
-        write_record_locked(&mut state, &DiagnosticRecord::RawF32 {
-            level,
-            set_index,
-            instance,
-            name: name.to_string(),
-            value,
-        });
+        write_record_locked(
+            &mut state,
+            &DiagnosticRecord::RawF32 {
+                level,
+                set_index,
+                instance,
+                name: name.to_string(),
+                value,
+            },
+        );
     }
 
     pub(super) fn dump_raw_f32_slice(
@@ -273,13 +283,16 @@ mod diagnostics {
             return;
         }
         let set_index = state.set_index;
-        write_record_locked(&mut state, &DiagnosticRecord::RawF32Slice {
-            level,
-            set_index,
-            instance,
-            name: name.to_string(),
-            values: values.to_vec(),
-        });
+        write_record_locked(
+            &mut state,
+            &DiagnosticRecord::RawF32Slice {
+                level,
+                set_index,
+                instance,
+                name: name.to_string(),
+                values: values.to_vec(),
+            },
+        );
     }
 
     pub(super) fn dump_raw_i32(level: DiagnosticLevel, instance: usize, name: &str, value: i32) {
@@ -291,13 +304,16 @@ mod diagnostics {
             return;
         }
         let set_index = state.set_index;
-        write_record_locked(&mut state, &DiagnosticRecord::RawI32 {
-            level,
-            set_index,
-            instance,
-            name: name.to_string(),
-            value,
-        });
+        write_record_locked(
+            &mut state,
+            &DiagnosticRecord::RawI32 {
+                level,
+                set_index,
+                instance,
+                name: name.to_string(),
+                value,
+            },
+        );
     }
 
     pub(super) fn dump_raw_i32_slice(
@@ -314,13 +330,16 @@ mod diagnostics {
             return;
         }
         let set_index = state.set_index;
-        write_record_locked(&mut state, &DiagnosticRecord::RawI32Slice {
-            level,
-            set_index,
-            instance,
-            name: name.to_string(),
-            values: values.to_vec(),
-        });
+        write_record_locked(
+            &mut state,
+            &DiagnosticRecord::RawI32Slice {
+                level,
+                set_index,
+                instance,
+                name: name.to_string(),
+                values: values.to_vec(),
+            },
+        );
     }
 
     pub(super) fn dump_raw_usize(
@@ -337,13 +356,16 @@ mod diagnostics {
             return;
         }
         let set_index = state.set_index;
-        write_record_locked(&mut state, &DiagnosticRecord::RawUsize {
-            level,
-            set_index,
-            instance,
-            name: name.to_string(),
-            value,
-        });
+        write_record_locked(
+            &mut state,
+            &DiagnosticRecord::RawUsize {
+                level,
+                set_index,
+                instance,
+                name: name.to_string(),
+                value,
+            },
+        );
     }
 
     pub(super) fn dump_raw_usize_slice(
@@ -360,13 +382,16 @@ mod diagnostics {
             return;
         }
         let set_index = state.set_index;
-        write_record_locked(&mut state, &DiagnosticRecord::RawUsizeSlice {
-            level,
-            set_index,
-            instance,
-            name: name.to_string(),
-            values: values.to_vec(),
-        });
+        write_record_locked(
+            &mut state,
+            &DiagnosticRecord::RawUsizeSlice {
+                level,
+                set_index,
+                instance,
+                name: name.to_string(),
+                values: values.to_vec(),
+            },
+        );
     }
 
     pub(super) fn dump_wav(
@@ -425,22 +450,21 @@ mod diagnostics {
                 Ok(writer) => writer,
                 Err(_) => return,
             };
-            state.wav_writers.insert(
-                key.clone(),
-                WavSink {
-                    writer,
-                    spec,
+            state
+                .wav_writers
+                .insert(key.clone(), WavSink { writer, spec });
+            write_record_locked(
+                &mut state,
+                &DiagnosticRecord::WavRef {
+                    level,
+                    set_index,
+                    instance,
+                    name: name.to_string(),
+                    path: path.to_string_lossy().to_string(),
+                    sample_rate_hz,
+                    num_channels,
                 },
             );
-            write_record_locked(&mut state, &DiagnosticRecord::WavRef {
-                level,
-                set_index,
-                instance,
-                name: name.to_string(),
-                path: path.to_string_lossy().to_string(),
-                sample_rate_hz,
-                num_channels,
-            });
         }
 
         let mut write_failed = false;
@@ -472,7 +496,6 @@ mod diagnostics {
     //     };
     //     state.set_index
     // }
-
 }
 
 /// Optional diagnostic logger for dumping AEC3 internal data.
@@ -584,6 +607,13 @@ impl ApmDataDumper {
             num_channels,
         );
         #[cfg(not(feature = "diagnostics"))]
-        let _ = (level, name, num_samples, samples, sample_rate_hz, num_channels);
+        let _ = (
+            level,
+            name,
+            num_samples,
+            samples,
+            sample_rate_hz,
+            num_channels,
+        );
     }
 }

@@ -37,10 +37,7 @@ impl VectorFloatFrame {
 
     /// Returns a deinterleaved immutable view equivalent to C++ `DeinterleavedView<const float>`.
     pub fn view_const(&self) -> Vec<&[f32]> {
-        self.channels
-            .iter()
-            .map(Vec::as_slice)
-            .collect::<Vec<_>>()
+        self.channels.iter().map(Vec::as_slice).collect::<Vec<_>>()
     }
 
     pub fn sample(&self, channel: usize, index: usize) -> f32 {

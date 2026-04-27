@@ -94,7 +94,10 @@ impl NodeFactory for ResampleFactory {
         Ok(())
     }
 
-    fn build(self: Box<Self>, _ctx: &mut crate::graph::BuildCtx) -> GraphResult<Box<dyn NodeRunner>> {
+    fn build(
+        self: Box<Self>,
+        _ctx: &mut crate::graph::BuildCtx,
+    ) -> GraphResult<Box<dyn NodeRunner>> {
         Ok(Box::new(ResampleRunner {
             input_format: self.input_format,
             audio_in: self.audio_in,

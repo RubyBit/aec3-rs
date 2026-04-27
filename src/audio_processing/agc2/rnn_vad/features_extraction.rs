@@ -7,7 +7,7 @@ use crate::audio_processing::agc2::rnn_vad::common::{
     MAX_PITCH_24_KHZ, NUM_BANDS, NUM_LOWER_BANDS,
 };
 use crate::audio_processing::agc2::rnn_vad::lp_residual::{
-    compute_and_post_process_lpc_coefficients, compute_lp_residual, NUM_LPC_COEFFICIENTS,
+    NUM_LPC_COEFFICIENTS, compute_and_post_process_lpc_coefficients, compute_lp_residual,
 };
 use crate::audio_processing::agc2::rnn_vad::pitch_search::PitchEstimator;
 use crate::audio_processing::agc2::rnn_vad::sequence_buffer::SequenceBuffer;
@@ -23,12 +23,8 @@ const HPF_CONFIG_24K: BiQuadConfig = BiQuadConfig {
 pub struct FeaturesExtractor {
     use_high_pass_filter: bool,
     hpf: BiQuadFilter,
-    pitch_buf_24khz: SequenceBuffer<
-        f32,
-        BUF_SIZE_24_KHZ,
-        FRAME_SIZE_10_MS_24_KHZ,
-        FRAME_SIZE_20_MS_24_KHZ,
-    >,
+    pitch_buf_24khz:
+        SequenceBuffer<f32, BUF_SIZE_24_KHZ, FRAME_SIZE_10_MS_24_KHZ, FRAME_SIZE_20_MS_24_KHZ>,
     lp_residual: [f32; BUF_SIZE_24_KHZ],
     pitch_estimator: PitchEstimator,
     spectral_features_extractor: SpectralFeaturesExtractor,
@@ -110,16 +106,19 @@ impl FeaturesExtractor {
         // rem[1] is the variability slot.
         let variability = &mut rem[1];
 
-        self.spectral_features_extractor.check_silence_compute_features(
-            &reference_frame,
-            &lagged_frame,
-            higher_bands.try_into().expect("higher bands shape"),
-            first.try_into().expect("average shape"),
-            first_derivative.try_into().expect("first derivative shape"),
-            second_derivative.try_into().expect("second derivative shape"),
-            bands_cross_corr.try_into().expect("cross corr shape"),
-            variability,
-        )
+        self.spectral_features_extractor
+            .check_silence_compute_features(
+                &reference_frame,
+                &lagged_frame,
+                higher_bands.try_into().expect("higher bands shape"),
+                first.try_into().expect("average shape"),
+                first_derivative.try_into().expect("first derivative shape"),
+                second_derivative
+                    .try_into()
+                    .expect("second derivative shape"),
+                bands_cross_corr.try_into().expect("cross corr shape"),
+                variability,
+            )
     }
 }
 
@@ -135,14 +134,17 @@ mod tests {
 
     fn pitch_is_valid(pitch_hz: f32) -> bool {
         let pitch_period = SAMPLE_RATE_24_KHZ as f32 / pitch_hz;
-        let initial_min_pitch_24khz = crate::audio_processing::agc2::rnn_vad::common::INITIAL_MIN_PITCH_24_KHZ as f32;
-        let max_pitch_24khz = crate::audio_processing::agc2::rnn_vad::common::MAX_PITCH_24_KHZ as f32;
+        let initial_min_pitch_24khz =
+            crate::audio_processing::agc2::rnn_vad::common::INITIAL_MIN_PITCH_24_KHZ as f32;
+        let max_pitch_24khz =
+            crate::audio_processing::agc2::rnn_vad::common::MAX_PITCH_24_KHZ as f32;
         initial_min_pitch_24khz <= pitch_period && pitch_period <= max_pitch_24khz
     }
 
     fn create_pure_tone(amplitude: f32, freq_hz: f32, dst: &mut [f32]) {
         for (i, s) in dst.iter_mut().enumerate() {
-            *s = amplitude * (2.0 * PI as f32 * freq_hz * i as f32 / SAMPLE_RATE_24_KHZ as f32).sin();
+            *s = amplitude
+                * (2.0 * PI as f32 * freq_hz * i as f32 / SAMPLE_RATE_24_KHZ as f32).sin();
         }
     }
 
@@ -179,12 +181,20 @@ mod tests {
         let pitch_feature_index = FEATURE_VECTOR_SIZE - 2;
 
         create_pure_tone(amplitude, low_pitch_hz, &mut samples);
-        assert!(!feed_test_data(&mut features_extractor, &samples, &mut feature_vector));
+        assert!(!feed_test_data(
+            &mut features_extractor,
+            &samples,
+            &mut feature_vector
+        ));
         let high_pitch_period = feature_vector[pitch_feature_index];
 
         features_extractor.reset();
         create_pure_tone(amplitude, high_pitch_hz, &mut samples);
-        assert!(!feed_test_data(&mut features_extractor, &samples, &mut feature_vector));
+        assert!(!feed_test_data(
+            &mut features_extractor,
+            &samples,
+            &mut feature_vector
+        ));
         let low_pitch_period = feature_vector[pitch_feature_index];
 
         assert!(
