@@ -97,6 +97,7 @@ impl BlockProcessor {
         self.capture_call_counter += 1;
 
         if !self.render_properly_started {
+            self.render_buffer.handle_skipped_capture_processing();
             return;
         }
         if !self.capture_properly_started {

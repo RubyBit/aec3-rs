@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed 
+- Changed in block processor to properly handle skipped capture blocks.
+
 ## [0.2.0] - 2026-04-28
 
 ### Fixed

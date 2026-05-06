@@ -224,6 +224,15 @@ impl RenderDelayBuffer {
         event
     }
 
+    /// Signals that a capture block arrived but capture processing was skipped.
+    ///
+    /// This mirrors WebRTC's `RenderDelayBuffer::HandleSkippedCaptureProcessing()` and is
+    /// required to keep the internal render/capture call counters consistent when
+    /// `delay.use_external_delay_estimator = true`.
+    pub fn handle_skipped_capture_processing(&mut self) {
+        self.capture_call_counter += 1;
+    }
+
     pub fn align_from_delay(&mut self, delay: usize) -> bool {
         assert!(!self.config.delay.use_external_delay_estimator);
         if !self.external_audio_buffer_delay_verified_after_reset
@@ -246,7 +255,9 @@ impl RenderDelayBuffer {
         assert!(self.config.delay.use_external_delay_estimator);
         if let Some(external) = self.external_audio_buffer_delay {
             let delay = self.render_call_counter - self.capture_call_counter + external as i64;
-            self.apply_total_delay(delay as isize);
+            let delay_with_headroom =
+                delay - (self.config.delay.delay_headroom_samples / BLOCK_SIZE) as i64;
+            self.apply_total_delay(delay_with_headroom as isize);
         }
     }
 
@@ -275,7 +286,11 @@ impl RenderDelayBuffer {
         if self.external_audio_buffer_delay.is_none() {
             self.external_audio_buffer_delay_verified_after_reset = false;
         }
-        self.external_audio_buffer_delay = Some(delay_ms / 4);
+        const SAMPLE_RATE_FOR_FIXED_CAPTURE_DELAY: i64 = 16_000;
+        const NUM_SAMPLES_PER_MS: i64 = SAMPLE_RATE_FOR_FIXED_CAPTURE_DELAY / 1000;
+        let delay_samples = delay_ms as i64 * NUM_SAMPLES_PER_MS
+            + self.config.delay.fixed_capture_delay_samples as i64;
+        self.external_audio_buffer_delay = Some((delay_samples / BLOCK_SIZE as i64) as i32);
     }
 
     pub fn has_received_buffer_delay(&self) -> bool {
@@ -495,6 +510,80 @@ mod tests {
             assert!(buffer.align_from_delay(delay));
             assert_eq!(buffer.delay(), delay);
         }
+    }
+
+    #[test]
+    fn skipped_capture_processing_affects_external_delay_alignment() {
+        let mut config = EchoCanceller3Config::default();
+        config.delay.use_external_delay_estimator = true;
+
+        let rate = 16_000i32;
+        let num_channels = 1usize;
+        let num_bands = num_bands_for_rate(rate);
+        let block = make_block(num_bands, num_channels);
+
+        let mut buffer_no_skip = RenderDelayBuffer::new(config.clone(), rate, num_channels);
+        let mut buffer_with_skip = RenderDelayBuffer::new(config, rate, num_channels);
+
+        // Provide an external buffer delay estimate.
+        buffer_no_skip.set_audio_buffer_delay(20);
+        buffer_with_skip.set_audio_buffer_delay(20);
+
+        // Push a small number of render blocks so the applied delay stays within range.
+        for _ in 0..10 {
+            buffer_no_skip.insert(&block);
+            buffer_with_skip.insert(&block);
+        }
+
+        // Simulate capture arriving before render was available.
+        let skipped = 3usize;
+        for _ in 0..skipped {
+            buffer_with_skip.handle_skipped_capture_processing();
+        }
+
+        buffer_no_skip.align_from_external_delay();
+        buffer_with_skip.align_from_external_delay();
+
+        assert_eq!(buffer_no_skip.delay(), buffer_with_skip.delay() + skipped);
+    }
+
+    #[test]
+    fn external_delay_alignment_applies_fixed_capture_delay_and_headroom() {
+        let rate = 16_000i32;
+        let num_channels = 1usize;
+        let num_bands = num_bands_for_rate(rate);
+        let block = make_block(num_bands, num_channels);
+
+        let mut base_config = EchoCanceller3Config::default();
+        base_config.delay.use_external_delay_estimator = true;
+        base_config.delay.delay_headroom_samples = 0;
+
+        let mut fixed_delay_config = base_config.clone();
+        fixed_delay_config.delay.fixed_capture_delay_samples = 2 * BLOCK_SIZE;
+
+        let mut headroom_config = base_config.clone();
+        headroom_config.delay.delay_headroom_samples = 2 * BLOCK_SIZE;
+
+        let mut base = RenderDelayBuffer::new(base_config, rate, num_channels);
+        let mut fixed_delay = RenderDelayBuffer::new(fixed_delay_config, rate, num_channels);
+        let mut headroom = RenderDelayBuffer::new(headroom_config, rate, num_channels);
+
+        base.set_audio_buffer_delay(20);
+        fixed_delay.set_audio_buffer_delay(20);
+        headroom.set_audio_buffer_delay(20);
+
+        for _ in 0..10 {
+            base.insert(&block);
+            fixed_delay.insert(&block);
+            headroom.insert(&block);
+        }
+
+        base.align_from_external_delay();
+        fixed_delay.align_from_external_delay();
+        headroom.align_from_external_delay();
+
+        assert_eq!(fixed_delay.delay(), base.delay() + 2);
+        assert_eq!(base.delay(), headroom.delay() + 2);
     }
 
     #[test]
