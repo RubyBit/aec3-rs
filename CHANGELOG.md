@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed 
 - Changed in block processor to properly handle skipped capture blocks.
 
+### Added
+- Doc comments for the `LinearPipeline` builder API.
+- File to File example utilizing the `LinearPipeline` builder API.
+
 ## [0.2.0] - 2026-04-28
 
 ### Fixed

@@ -29,5 +29,6 @@ required-features = ["diagnostics"]
 anyhow = "1.0.100"
 cpal = { git = "https://github.com/RustAudio/cpal.git" }
 ctrlc = "3"
+hound = "3"
 
 

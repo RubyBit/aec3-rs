@@ -35,6 +35,7 @@ Quick start
 Run the examples:
 
 ```powershell
+cargo run --example file_to_file -- render.wav capture.wav output.wav
 cargo run --example karaoke_loopback
 cargo run --example karaoke_loopback_delayed
 ```
@@ -241,6 +242,7 @@ Examples
 
 - `examples/karaoke_loopback.rs`: live loopback + microphone processing with `pipelines::linear`
 - `examples/karaoke_loopback_delayed.rs`: same setup with an intentionally delayed capture path
+- `examples/file_to_file.rs`: minimal offline WAV render + capture -> processed WAV example
 
 Contributing
 ------------
