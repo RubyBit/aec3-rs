@@ -55,7 +55,7 @@ The crate is organized around three top-level modules:
   - graph builder
   - typed ports and packets
   - queueing, scheduling, and backpressure
-  - packet timestamps and alignment rules
+  - packet sequence numbers and alignment rules
 - `aec3::nodes`
   - `audio`: `AudioFormat`, `AudioChunk`, pooled audio storage
   - `aec3`: echo cancellation node
@@ -103,7 +103,7 @@ Building a graph
 ----------------
 
 ```rust
-use ::aec3::graph::{GraphBuilder, Packet, PacketMeta, QueueConfig, Runtime, RuntimeOptions};
+use ::aec3::graph::{GraphBuilder, Packet, PacketMeta, QueueConfig, Runtime};
 use ::aec3::nodes::{
     aec3 as aec3_node,
     agc2,
@@ -114,8 +114,8 @@ use ::aec3::nodes::{
 let format = AudioFormat::ten_ms(48_000, 1);
 
 let mut graph = GraphBuilder::new();
-let mic = graph.source::<AudioChunk>("mic", QueueConfig::audio_default());
-let render = graph.source::<AudioChunk>("render", QueueConfig::audio_default());
+let mic = graph.source::<AudioChunk>("mic");
+let render = graph.source::<AudioChunk>("render");
 let output = graph.sink::<AudioChunk>("output", QueueConfig::audio_default());
 
 let agc_pre = agc2::builder(format).add_to(&mut graph)?;
@@ -138,7 +138,7 @@ graph.connect(
 graph.connect(suppressor.audio_out, output)?;
 
 let spec = graph.build()?;
-let mut runtime = Runtime::new(spec, RuntimeOptions)?;
+let mut runtime = Runtime::new(spec)?;
 
 runtime.push(
     render,
@@ -182,25 +182,33 @@ Built-in nodes use two scheduling styles:
   - run only when a trigger packet can be matched with dependency packets under a `MatchPolicy`
   - used for side-input patterns such as optional analysis audio
 
-`PacketMeta` carries optional timestamps:
+Side-input alignment is sequence-based. `PacketMeta` carries an optional
+monotonic sequence counter (and an optional timestamp, which the runtime
+treats as opaque pass-through metadata):
 
 ```rust
-use aec3::graph::{PacketMeta, Timestamp};
+use aec3::graph::PacketMeta;
 
 let meta = PacketMeta {
-    timestamp: Some(Timestamp {
-        clock: 0,
-        start: 48_000,
-        duration: 480,
-    }),
-    sequence: 7,
-    discontinuity: false,
+    sequence: Some(7),
+    ..PacketMeta::default()
 };
 ```
 
-Alignment rules only compare packets on the same clock. Cross-clock joins need
-an explicit adaptation node. When timestamps are absent, `AlignOn` falls back
-to FIFO/latest queue behavior instead of erroring.
+Two `MatchPolicy` options are supported:
+
+- `MatchPolicy::BySequence`: the dependency packet must carry the same
+  `sequence` as the trigger packet. Packets that fan out from one upstream
+  packet inherit its meta, so this expresses "derived from the same frame".
+  Matching is strict: a required dependency with unstamped packets on either
+  side is an error rather than a silent fallback, and a stamped trigger waits
+  until the matching dependency packet arrives.
+- `MatchPolicy::Fifo`: explicit queue-order matching for streams that are
+  produced in lockstep. No metadata required.
+
+The `LinearPipeline` wrapper stamps sequences automatically; when driving a
+graph manually, stamp `sequence` on source packets (or use the `*_with_meta`
+pipeline methods) if any node downstream aligns with `BySequence`.
 
 Custom nodes
 ------------

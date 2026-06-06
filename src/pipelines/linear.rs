@@ -55,7 +55,7 @@ use crate::audio_processing::gain_controller2::GainController2Config;
 use crate::audio_processing::ns::NsConfig;
 use crate::graph::{
     GraphBuilder, GraphResult, NodeControlState, NodeId, OutPort, Packet, PacketHandle, PacketMeta,
-    QueueConfig, Runtime, RuntimeOptions, Sink, Source,
+    QueueConfig, Runtime, Sink, Source,
 };
 use crate::nodes::{
     aec3, agc2,
@@ -235,9 +235,9 @@ impl LinearPipelineBuilder {
     /// the standard layout but still need to attach extra nodes, taps, or custom
     /// sinks before building the graph.
     pub fn add_to(self, graph: &mut GraphBuilder) -> GraphResult<LinearPipelineHandles> {
-        let capture = graph.source::<AudioChunk>("capture", QueueConfig::audio_default());
-        let render = graph.source::<AudioChunk>("render", QueueConfig::audio_default());
-        let delay_ms = graph.source::<i32>("delay_ms", QueueConfig::latest(1));
+        let capture = graph.source::<AudioChunk>("capture");
+        let render = graph.source::<AudioChunk>("render");
+        let delay_ms = graph.source::<i32>("delay_ms");
         let output = graph.sink::<AudioChunk>("output", QueueConfig::audio_default());
 
         let uses_linear_analysis = self.enable_noise_suppression
@@ -351,7 +351,7 @@ impl LinearPipelineBuilder {
         let mut graph = GraphBuilder::new();
         let handles = self.add_to(&mut graph)?;
         let spec = graph.build()?;
-        let runtime = Runtime::new(spec, RuntimeOptions)?;
+        let runtime = Runtime::new(spec)?;
         Ok(LinearPipeline {
             runtime,
             handles,
@@ -577,7 +577,7 @@ impl LinearPipeline {
         let sequence = self.next_sequence;
         self.next_sequence += 1;
         PacketMeta {
-            sequence,
+            sequence: Some(sequence),
             ..PacketMeta::default()
         }
     }

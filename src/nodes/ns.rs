@@ -92,7 +92,7 @@ impl NodeSpec for NoiseSuppressorNodeBuilder {
                 deps: vec![Dependency {
                     input: analysis_in.raw(),
                     required: false,
-                    match_policy: MatchPolicy::ExactTimestamp,
+                    match_policy: MatchPolicy::BySequence,
                 }],
             }
         } else {
@@ -133,10 +133,6 @@ struct NoiseSuppressorFactory {
 }
 
 impl NodeFactory for NoiseSuppressorFactory {
-    fn describe(&self, _io: &mut crate::graph::NodeIoBuilder<'_>) -> GraphResult<()> {
-        Ok(())
-    }
-
     fn build(
         self: Box<Self>,
         _ctx: &mut crate::graph::BuildCtx,

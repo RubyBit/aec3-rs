@@ -90,10 +90,6 @@ struct ResampleFactory {
 }
 
 impl NodeFactory for ResampleFactory {
-    fn describe(&self, _io: &mut crate::graph::NodeIoBuilder<'_>) -> GraphResult<()> {
-        Ok(())
-    }
-
     fn build(
         self: Box<Self>,
         _ctx: &mut crate::graph::BuildCtx,

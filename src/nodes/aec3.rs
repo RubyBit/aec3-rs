@@ -17,7 +17,7 @@ pub type Aec3Metrics = Metrics;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticEvent {
     pub kind: &'static str,
-    pub sequence: u64,
+    pub sequence: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -122,6 +122,10 @@ impl NodeSpec for Aec3NodeBuilder {
 
         let linear_format = AudioFormat::ten_ms(16_000, self.capture_format.channels);
         let node = graph.new_node("aec3");
+        // `latest(1)` is safe on this trigger input because the runner reads
+        // render audio only through `ctx.trigger_packet`, never `ctx.take`:
+        // the trigger event carries the packet, so replacing queued packets
+        // cannot desync trigger events from queue contents.
         let render_in = graph.register_input::<AudioChunk>(
             node,
             "render_in",
@@ -231,10 +235,6 @@ struct Aec3Factory {
 }
 
 impl NodeFactory for Aec3Factory {
-    fn describe(&self, _io: &mut crate::graph::NodeIoBuilder<'_>) -> GraphResult<()> {
-        Ok(())
-    }
-
     fn build(
         self: Box<Self>,
         _ctx: &mut crate::graph::BuildCtx,

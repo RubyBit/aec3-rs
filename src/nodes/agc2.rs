@@ -174,10 +174,6 @@ struct Agc2Factory {
 }
 
 impl NodeFactory for Agc2Factory {
-    fn describe(&self, _io: &mut crate::graph::NodeIoBuilder<'_>) -> GraphResult<()> {
-        Ok(())
-    }
-
     fn build(
         self: Box<Self>,
         _ctx: &mut crate::graph::BuildCtx,

@@ -85,10 +85,6 @@ struct HighPassFactory {
 }
 
 impl NodeFactory for HighPassFactory {
-    fn describe(&self, _io: &mut crate::graph::NodeIoBuilder<'_>) -> GraphResult<()> {
-        Ok(())
-    }
-
     fn build(
         self: Box<Self>,
         _ctx: &mut crate::graph::BuildCtx,

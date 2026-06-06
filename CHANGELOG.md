@@ -9,10 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed 
 - Changed in block processor to properly handle skipped capture blocks.
+- Graph side-input alignment is now sequence-based and strict (breaking):
+  - Added `MatchPolicy::Fifo` (explicit queue-order matching) and
+    `MatchPolicy::BySequence` (match on equal `PacketMeta::sequence`).
+  - `PacketMeta::sequence` is now `Option<u64>` so "not stamped" is
+    representable; default packets no longer share sequence `0`.
+  - A required `BySequence` dependency with unstamped packets on either side
+    now fails with `GraphError::MissingSequenceForAlignment` instead of
+    silently falling back to FIFO matching (the error names the port whose
+    packets are missing the stamp).
+  - `BySequence` dependency packets older than the pending trigger are pruned
+    during matching (sequences are monotonic, so they can never match a
+    current or future trigger); persistent mismatches no longer accumulate
+    until the dependency queue rejects pushes.
+  - Reads on an `AlignOn` dependency port with no match in the current
+    execution now return `None` instead of falling back to the queue head,
+    so a node can never consume a wrong-frame side packet.
+  - The noise suppression analysis side input aligns with `BySequence`.
+- `GraphBuilder::build` now rejects zero-capacity queues with
+  `GraphError::InvalidQueueCapacity`; capacity zero previously behaved
+  inconsistently across overflow policies.
+- `GraphBuilder::source` no longer takes a `QueueConfig` (breaking); the
+  argument was ignored because queues live on inputs and sinks.
+- `GraphError::QueueFull` now reports the actual port name.
+- Split `aec3::graph` into `port`, `packet`, `node`, `builder`, and `runtime`
+  submodules. All public items are re-exported from `aec3::graph`, so paths
+  are unchanged.
+
+### Removed
+- Timestamp-based matching (breaking): `MatchPolicy::AnyAvailable`,
+  `ExactTimestamp`, `WithinSkew`, and `LatestBefore` are gone along with the
+  never-constructed `MissingTimestampForAlignment` and `CrossClockAlignment`
+  errors. `Timestamp` and `ClockId` remain on `PacketMeta` as opaque
+  pass-through metadata; alignment is sequence-based.
+- `ReusablePortData` (breaking): defined but never used by the runtime.
+- `NodeFactory::describe`, `NodeIoBuilder`, and `GraphBuilder::add_factory`
+  (breaking): a parallel node-registration path that nothing used; register
+  ports via `NodeSpec` and `GraphBuilder::register_input`/`register_output`.
+- `RuntimeOptions` (breaking): `Runtime::new(spec)` no longer takes the empty
+  options struct.
 
 ### Added
+- Doc comments for `GraphBuilder` and `Runtime` APIs.
 - Doc comments for the `LinearPipeline` builder API.
 - File to File example utilizing the `LinearPipeline` builder API.
+- Module documentation for `aec3::graph` covering the single-threaded runtime
+  model and the interim caveat about non-reject overflow on trigger inputs.
 
 ## [0.2.0] - 2026-04-28
 

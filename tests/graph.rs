@@ -1,7 +1,7 @@
 use aec3::graph::{
     BuildCtx, Dependency, GraphBuilder, GraphError, GraphResult, InPort, InputOptions, MatchPolicy,
-    NodeControlState, NodeFactory, NodeIoBuilder, NodeRunner, NodeSpec, OutPort, OutputOptions,
-    Packet, PacketMeta, ProcessCtx, QueueConfig, Runtime, RuntimeOptions, SchedulePlan, Timestamp,
+    NodeControlState, NodeFactory, NodeRunner, NodeSpec, OutPort, OutputOptions, Packet,
+    PacketMeta, ProcessCtx, QueueConfig, Runtime, SchedulePlan, Timestamp,
 };
 use aec3::nodes::{
     aec3 as aec3_node, agc2, audio::AudioChunk, audio::AudioFormat, hpf, ns, resample, tap,
@@ -30,7 +30,7 @@ fn audio_packet(
                 start,
                 duration: u32::from(format.frames_per_channel),
             }),
-            sequence,
+            sequence: Some(sequence),
             discontinuity: false,
         },
         payload: AudioChunk::from_interleaved(format, &samples),
@@ -97,10 +97,6 @@ impl NodeSpec for OffsetNodeBuilder {
 }
 
 impl NodeFactory for OffsetFactory {
-    fn describe(&self, _io: &mut NodeIoBuilder<'_>) -> GraphResult<()> {
-        Ok(())
-    }
-
     fn build(self: Box<Self>, _ctx: &mut BuildCtx) -> GraphResult<Box<dyn NodeRunner>> {
         Ok(Box::new(OffsetRunner {
             input: self.input,
@@ -130,6 +126,8 @@ struct GateNode {
 #[derive(Debug, Clone, Copy)]
 struct GateNodeBuilder {
     format: AudioFormat,
+    match_policy: MatchPolicy,
+    required: bool,
 }
 
 struct GateFactory {
@@ -171,8 +169,8 @@ impl NodeSpec for GateNodeBuilder {
                 trigger: audio_in.raw(),
                 deps: vec![Dependency {
                     input: gate_in.raw(),
-                    required: true,
-                    match_policy: MatchPolicy::ExactTimestamp,
+                    required: self.required,
+                    match_policy: self.match_policy,
                 }],
             },
             Box::new(GateFactory {
@@ -190,10 +188,6 @@ impl NodeSpec for GateNodeBuilder {
 }
 
 impl NodeFactory for GateFactory {
-    fn describe(&self, _io: &mut NodeIoBuilder<'_>) -> GraphResult<()> {
-        Ok(())
-    }
-
     fn build(self: Box<Self>, _ctx: &mut BuildCtx) -> GraphResult<Box<dyn NodeRunner>> {
         Ok(Box::new(GateRunner {
             audio_in: self.audio_in,
@@ -252,7 +246,7 @@ fn resample_node_adapts_between_formats() {
     let input_format = mono_format(48_000);
     let output_format = mono_format(16_000);
     let mut graph = GraphBuilder::new();
-    let source = graph.source::<AudioChunk>("source", QueueConfig::audio_default());
+    let source = graph.source::<AudioChunk>("source");
     let sink = graph.sink::<AudioChunk>("sink", QueueConfig::audio_default());
     let resample = resample::builder(input_format, output_format)
         .add_to(&mut graph)
@@ -265,7 +259,7 @@ fn resample_node_adapts_between_formats() {
         .expect("resample should connect to sink");
 
     let spec = graph.build().expect("graph should build");
-    let mut runtime = Runtime::new(spec, RuntimeOptions).expect("runtime should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
     runtime
         .push(source, audio_packet(input_format, 1, Some(1), 0.2))
         .expect("push should succeed");
@@ -286,11 +280,15 @@ fn resample_node_adapts_between_formats() {
 fn align_on_waits_for_required_side_input() {
     let format = mono_format(16_000);
     let mut graph = GraphBuilder::new();
-    let audio_source = graph.source::<AudioChunk>("audio", QueueConfig::audio_default());
-    let gate_source = graph.source::<i32>("gate", QueueConfig::bounded(4));
+    let audio_source = graph.source::<AudioChunk>("audio");
+    let gate_source = graph.source::<i32>("gate");
     let sink = graph.sink::<AudioChunk>("sink", QueueConfig::audio_default());
     let gate = graph
-        .add_node(GateNodeBuilder { format })
+        .add_node(GateNodeBuilder {
+            format,
+            match_policy: MatchPolicy::BySequence,
+            required: true,
+        })
         .expect("gate node should register");
     graph
         .connect(audio_source, gate.audio_in)
@@ -303,9 +301,9 @@ fn align_on_waits_for_required_side_input() {
         .expect("gate should connect to sink");
 
     let spec = graph.build().expect("graph should build");
-    let mut runtime = Runtime::new(spec, RuntimeOptions).expect("runtime should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
     runtime
-        .push(audio_source, audio_packet(format, 1, Some(5), 0.3))
+        .push(audio_source, audio_packet(format, 7, Some(5), 0.3))
         .expect("audio push should succeed");
     runtime
         .run_until_stalled()
@@ -318,17 +316,38 @@ fn align_on_waits_for_required_side_input() {
         "audio should wait until the required side input arrives"
     );
 
+    // A stamped side packet with a *different* sequence must not match.
     runtime
         .push(
             gate_source,
             Packet {
                 meta: PacketMeta {
-                    timestamp: Some(Timestamp {
-                        clock: 0,
-                        start: 5,
-                        duration: 160,
-                    }),
-                    sequence: 2,
+                    timestamp: None,
+                    sequence: Some(6),
+                    discontinuity: false,
+                },
+                payload: 0,
+            },
+        )
+        .expect("gate push should succeed");
+    runtime
+        .run_until_stalled()
+        .expect("graph should stall cleanly");
+    assert!(
+        runtime
+            .try_pull(sink)
+            .expect("pull should succeed")
+            .is_none(),
+        "a mismatched sequence must not align"
+    );
+
+    runtime
+        .push(
+            gate_source,
+            Packet {
+                meta: PacketMeta {
+                    timestamp: None,
+                    sequence: Some(7),
                     discontinuity: false,
                 },
                 payload: 1,
@@ -345,11 +364,222 @@ fn align_on_waits_for_required_side_input() {
 }
 
 #[test]
+fn by_sequence_alignment_rejects_unstamped_packets_on_required_inputs() {
+    let format = mono_format(16_000);
+    let mut graph = GraphBuilder::new();
+    let audio_source = graph.source::<AudioChunk>("audio");
+    let gate_source = graph.source::<i32>("gate");
+    let sink = graph.sink::<AudioChunk>("sink", QueueConfig::audio_default());
+    let gate = graph
+        .add_node(GateNodeBuilder {
+            format,
+            match_policy: MatchPolicy::BySequence,
+            required: true,
+        })
+        .expect("gate node should register");
+    graph
+        .connect(audio_source, gate.audio_in)
+        .expect("audio source should connect");
+    graph
+        .connect(gate_source, gate.gate_in)
+        .expect("gate source should connect");
+    graph
+        .connect(gate.audio_out, sink)
+        .expect("gate should connect to sink");
+
+    let spec = graph.build().expect("graph should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
+
+    // Unstamped trigger on a required sequence-aligned dependency: hard error
+    // instead of a silent FIFO fallback or an unbounded stall.
+    let mut unstamped = audio_packet(format, 0, None, 0.3);
+    unstamped.meta.sequence = None;
+    runtime
+        .push(audio_source, unstamped)
+        .expect("audio push should succeed");
+    let err = runtime
+        .run_until_stalled()
+        .expect_err("unstamped trigger should be rejected");
+    assert!(matches!(
+        err,
+        GraphError::MissingSequenceForAlignment { .. }
+    ));
+}
+
+#[test]
+fn by_sequence_alignment_prunes_stale_dependency_packets() {
+    let format = mono_format(16_000);
+    let mut graph = GraphBuilder::new();
+    let audio_source = graph.source::<AudioChunk>("audio");
+    let gate_source = graph.source::<i32>("gate");
+    let sink = graph.sink::<AudioChunk>("sink", QueueConfig::audio_default());
+    let gate = graph
+        .add_node(GateNodeBuilder {
+            format,
+            match_policy: MatchPolicy::BySequence,
+            required: true,
+        })
+        .expect("gate node should register");
+    graph
+        .connect(audio_source, gate.audio_in)
+        .expect("audio source should connect");
+    graph
+        .connect(gate_source, gate.gate_in)
+        .expect("gate source should connect");
+    graph
+        .connect(gate.audio_out, sink)
+        .expect("gate should connect to sink");
+
+    let spec = graph.build().expect("graph should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
+
+    runtime
+        .push(audio_source, audio_packet(format, 100, None, 0.3))
+        .expect("audio push should succeed");
+    runtime
+        .run_until_stalled()
+        .expect("graph should stall cleanly");
+
+    // Sequences are monotonic, so packets older than the pending trigger can
+    // never match and must be pruned. Without pruning, the gate queue
+    // (bounded(8), RejectPush) would reject pushes after eight mismatches.
+    for stale_sequence in 1..=20u64 {
+        runtime
+            .push(
+                gate_source,
+                Packet {
+                    meta: PacketMeta {
+                        timestamp: None,
+                        sequence: Some(stale_sequence),
+                        discontinuity: false,
+                    },
+                    payload: 0,
+                },
+            )
+            .expect("stale gate packets should be pruned, not accumulate");
+        runtime
+            .run_until_stalled()
+            .expect("graph should stall cleanly");
+    }
+    assert!(
+        runtime
+            .try_pull(sink)
+            .expect("pull should succeed")
+            .is_none(),
+        "stale gate packets must not align"
+    );
+
+    runtime
+        .push(
+            gate_source,
+            Packet {
+                meta: PacketMeta {
+                    timestamp: None,
+                    sequence: Some(100),
+                    discontinuity: false,
+                },
+                payload: 1,
+            },
+        )
+        .expect("matching gate push should succeed");
+    runtime.run_until_stalled().expect("runtime should drain");
+    assert!(
+        runtime
+            .try_pull(sink)
+            .expect("pull should succeed")
+            .is_some()
+    );
+}
+
+#[test]
+fn unmatched_optional_dependency_reads_nothing() {
+    let format = mono_format(16_000);
+    let mut graph = GraphBuilder::new();
+    let audio_source = graph.source::<AudioChunk>("audio");
+    let gate_source = graph.source::<i32>("gate");
+    let sink = graph.sink::<AudioChunk>("sink", QueueConfig::audio_default());
+    let gate = graph
+        .add_node(GateNodeBuilder {
+            format,
+            match_policy: MatchPolicy::BySequence,
+            required: false,
+        })
+        .expect("gate node should register");
+    graph
+        .connect(audio_source, gate.audio_in)
+        .expect("audio source should connect");
+    graph
+        .connect(gate_source, gate.gate_in)
+        .expect("gate source should connect");
+    graph
+        .connect(gate.audio_out, sink)
+        .expect("gate should connect to sink");
+
+    let spec = graph.build().expect("graph should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
+
+    // Queue a gate packet for a *future* frame, then trigger with an earlier
+    // frame. The optional dependency has no match, so the node must run but
+    // `take(gate_in)` must return nothing instead of consuming the queued
+    // future packet (GateRunner only emits when it reads a gate packet).
+    runtime
+        .push(
+            gate_source,
+            Packet {
+                meta: PacketMeta {
+                    timestamp: None,
+                    sequence: Some(5),
+                    discontinuity: false,
+                },
+                payload: 1,
+            },
+        )
+        .expect("gate push should succeed");
+    runtime
+        .push(audio_source, audio_packet(format, 1, None, 0.3))
+        .expect("audio push should succeed");
+    runtime.run_until_stalled().expect("runtime should drain");
+    assert!(
+        runtime
+            .try_pull(sink)
+            .expect("pull should succeed")
+            .is_none(),
+        "an unmatched optional dependency must not consume a wrong-frame packet"
+    );
+
+    // The frame-5 gate packet must still be available for the frame-5 trigger.
+    runtime
+        .push(audio_source, audio_packet(format, 5, None, 0.4))
+        .expect("audio push should succeed");
+    runtime.run_until_stalled().expect("runtime should drain");
+    assert!(
+        runtime
+            .try_pull(sink)
+            .expect("pull should succeed")
+            .is_some()
+    );
+}
+
+#[test]
+fn graph_rejects_zero_capacity_queues() {
+    let mut graph = GraphBuilder::new();
+    let source = graph.source::<AudioChunk>("source");
+    let sink = graph.sink::<AudioChunk>("sink", QueueConfig::latest(0));
+    graph.connect(source, sink).expect("edge should connect");
+
+    let err = graph
+        .build()
+        .err()
+        .expect("zero-capacity queue should be rejected");
+    assert!(matches!(err, GraphError::InvalidQueueCapacity { .. }));
+}
+
+#[test]
 fn aec3_pipeline_supports_async_render_capture_and_side_inputs() {
     let format = mono_format(48_000);
     let mut graph = GraphBuilder::new();
-    let mic = graph.source::<AudioChunk>("mic", QueueConfig::audio_default());
-    let render = graph.source::<AudioChunk>("render", QueueConfig::audio_default());
+    let mic = graph.source::<AudioChunk>("mic");
+    let render = graph.source::<AudioChunk>("render");
     let output = graph.sink::<AudioChunk>("output", QueueConfig::audio_default());
     let metrics_sink = graph.sink::<aec3_node::Aec3Metrics>("metrics", QueueConfig::latest(1));
 
@@ -395,7 +625,7 @@ fn aec3_pipeline_supports_async_render_capture_and_side_inputs() {
         .expect("metrics should connect");
 
     let spec = graph.build().expect("graph should build");
-    let mut runtime = Runtime::new(spec, RuntimeOptions).expect("runtime should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
 
     runtime
         .push(render, audio_packet(format, 1, Some(10), 0.1))
@@ -436,8 +666,8 @@ fn aec3_pipeline_supports_async_render_capture_and_side_inputs() {
 fn capture_only_agc_pipeline_runs_without_render() {
     let format = mono_format(16_000);
     let mut graph = GraphBuilder::new();
-    let audio = graph.source::<AudioChunk>("audio", QueueConfig::audio_default());
-    let input_volume = graph.source::<i32>("input_volume", QueueConfig::latest(1));
+    let audio = graph.source::<AudioChunk>("audio");
+    let input_volume = graph.source::<i32>("input_volume");
     let audio_out = graph.sink::<AudioChunk>("audio_out", QueueConfig::audio_default());
     let recommended_out = graph.sink::<i32>("recommended", QueueConfig::latest(1));
     let agc = agc2::builder(format)
@@ -465,7 +695,7 @@ fn capture_only_agc_pipeline_runs_without_render() {
         .expect("recommended sink should connect");
 
     let spec = graph.build().expect("graph should build");
-    let mut runtime = Runtime::new(spec, RuntimeOptions).expect("runtime should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
     runtime
         .push(
             input_volume,
@@ -502,7 +732,7 @@ fn capture_only_agc_pipeline_runs_without_render() {
 fn tap_node_fans_out_to_multiple_outputs() {
     let format = mono_format(16_000);
     let mut graph = GraphBuilder::new();
-    let source = graph.source::<AudioChunk>("source", QueueConfig::audio_default());
+    let source = graph.source::<AudioChunk>("source");
     let sink_a = graph.sink::<AudioChunk>("sink_a", QueueConfig::audio_default());
     let sink_b = graph.sink::<AudioChunk>("sink_b", QueueConfig::audio_default());
     let tap = tap::builder(format)
@@ -520,7 +750,7 @@ fn tap_node_fans_out_to_multiple_outputs() {
         .expect("tap output should connect");
 
     let spec = graph.build().expect("graph should build");
-    let mut runtime = Runtime::new(spec, RuntimeOptions).expect("runtime should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
     runtime
         .push(source, audio_packet(format, 1, Some(1), 1.2))
         .expect("push should succeed");
@@ -539,14 +769,18 @@ fn tap_node_fans_out_to_multiple_outputs() {
 }
 
 #[test]
-fn align_on_without_timestamps_falls_back_to_fifo() {
+fn align_on_fifo_policy_matches_queue_order_without_metadata() {
     let format = mono_format(16_000);
     let mut graph = GraphBuilder::new();
-    let source = graph.source::<AudioChunk>("source", QueueConfig::audio_default());
-    let gate_source = graph.source::<i32>("gate", QueueConfig::latest(1));
+    let source = graph.source::<AudioChunk>("source");
+    let gate_source = graph.source::<i32>("gate");
     let sink = graph.sink::<AudioChunk>("sink", QueueConfig::audio_default());
     let gate = graph
-        .add_node(GateNodeBuilder { format })
+        .add_node(GateNodeBuilder {
+            format,
+            match_policy: MatchPolicy::Fifo,
+            required: true,
+        })
         .expect("gate node should register");
     graph
         .connect(source, gate.audio_in)
@@ -559,7 +793,7 @@ fn align_on_without_timestamps_falls_back_to_fifo() {
         .expect("sink should connect");
 
     let spec = graph.build().expect("graph should build");
-    let mut runtime = Runtime::new(spec, RuntimeOptions).expect("runtime should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
     runtime
         .push(
             gate_source,
@@ -574,7 +808,7 @@ fn align_on_without_timestamps_falls_back_to_fifo() {
         .expect("push should succeed");
     runtime
         .run_until_stalled()
-        .expect("alignment should fall back to fifo/latest when timestamps are absent");
+        .expect("fifo alignment should match queue order without metadata");
     assert!(
         runtime
             .try_pull(sink)
@@ -587,7 +821,7 @@ fn align_on_without_timestamps_falls_back_to_fifo() {
 fn built_in_nodes_support_bypass_and_suspend_states() {
     let format = mono_format(16_000);
     let mut graph = GraphBuilder::new();
-    let source = graph.source::<AudioChunk>("source", QueueConfig::audio_default());
+    let source = graph.source::<AudioChunk>("source");
     let sink_a = graph.sink::<AudioChunk>("sink_a", QueueConfig::audio_default());
     let sink_b = graph.sink::<AudioChunk>("sink_b", QueueConfig::audio_default());
     let tap_node = tap::builder(format)
@@ -605,7 +839,7 @@ fn built_in_nodes_support_bypass_and_suspend_states() {
         .expect("tap sink should connect");
 
     let spec = graph.build().expect("graph should build");
-    let mut runtime = Runtime::new(spec, RuntimeOptions).expect("runtime should build");
+    let mut runtime = Runtime::new(spec).expect("runtime should build");
 
     runtime
         .set_node_state(tap_node.node_id(), NodeControlState::Bypassed)

@@ -2,8 +2,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::graph::ReusablePortData;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AudioFormat {
     pub sample_rate_hz: u32,
@@ -150,13 +148,5 @@ impl AudioChunk {
 
     pub fn samples_mut(&mut self) -> &mut [f32] {
         self.data.make_mut()
-    }
-}
-
-impl ReusablePortData for AudioChunk {
-    type PoolKey = AudioFormat;
-
-    fn pool_key(&self) -> Self::PoolKey {
-        self.format
     }
 }

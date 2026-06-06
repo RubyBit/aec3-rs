@@ -41,6 +41,9 @@ fn processing_thread(
 
     let mut pipeline = linear::builder(format, format)
         .aec3_config(echo_cancel_config)
+        .enable_gain_controller2(true)
+        .enable_noise_suppression(true)
+        .enable_high_pass_filter(true)
         .export_metrics(true)
         .build()
         .expect("failed to build linear voice pipeline");
