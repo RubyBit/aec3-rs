@@ -4,8 +4,9 @@ aec3 - Rust port of WebRTC AEC3
 ===============================
 
 `aec3` is a Rust port of WebRTC's AEC3 acoustic echo canceller plus a growing
-set of reusable DSP building blocks. In `0.2`, the crate moves away from the
-old special-purpose `voip` wrapper and exposes a generic event-driven DAG:
+set of reusable DSP building blocks. In `0.2`, the crate moves to use a generic event
+driven graph execution model instead of the previous fixed pipeline. This allows for
+more flexible processing topologies/pipelines to map to a wider variety of (custom) use cases.
 
 - `aec3::graph` is the runtime, scheduling, ports, packets, and validation layer
 - `aec3::nodes` contains built-in audio/DSP nodes such as AEC3, NS, AGC2, HPF,
@@ -13,7 +14,7 @@ old special-purpose `voip` wrapper and exposes a generic event-driven DAG:
 - `aec3::pipelines` adds ergonomic builders on top of the graph for common layouts
 
 This lets you model capture-only paths, duplex AEC paths, side-channel analysis
-links, multi-output graphs, and custom user nodes with one execution model. This will also allow more flexible scheduling and optimization opportunities in the future such as running nodes at different rates, dynamic reconfiguration, and more efficient fan-out patterns + easier to integrate custom processing on your pipelines. 
+links, multi-output graphs, and custom user nodes with one execution model. This will also allow more flexible scheduling and optimization opportunities in the future such as running nodes at different rates, dynamic reconfiguration, and more efficient fan-out patterns.
 
 NOTE: This is a work in progress and the API is expected to evolve. Feedback and contributions are very welcome, specially in terms of ergonomics and use cases but also performance (i.e I am still validating internally if this design is useful). You still utilize the processing modules by themselves in `aec3::audio_processing` if you want to avoid the graph API for now or have no use for it.
 
