@@ -57,11 +57,11 @@ impl VectorMath {
     }
 
     fn dot_product_neon(&self, x: &[f32], y: &[f32]) -> f32 {
-        #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+        #[cfg(target_arch = "aarch64")]
         unsafe {
             dot_product_neon_impl(x, y)
         }
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
+        #[cfg(not(target_arch = "aarch64"))]
         {
             self.dot_product_scalar(x, y)
         }
@@ -148,13 +148,8 @@ use std::arch::aarch64::{
     float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32, vld1q_f32,
     vmulq_f32, vpadd_f32, vst1_f32,
 };
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{
-    float32x4_t, vadd_f32, vaddq_f32, vdupq_n_f32, vget_high_f32, vget_low_f32, vld1q_f32,
-    vmulq_f32, vpadd_f32, vst1_f32,
-};
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 #[inline]
 #[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn reduce_f32x4(sum: float32x4_t) -> f32 {
@@ -165,7 +160,7 @@ unsafe fn reduce_f32x4(sum: float32x4_t) -> f32 {
     result[0]
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[target_feature(enable = "neon")]
 unsafe fn dot_product_neon_impl(x: &[f32], y: &[f32]) -> f32 {

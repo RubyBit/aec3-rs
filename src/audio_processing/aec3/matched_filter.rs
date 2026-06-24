@@ -1,4 +1,4 @@
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 use crate::audio_processing::aec3::aec3_common::detect_neon;
 use crate::audio_processing::aec3::aec3_common::{Aec3Optimization, BLOCK_SIZE};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -9,8 +9,6 @@ use std::cmp::Ordering;
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{vaddq_f32, vdupq_n_f32, vld1q_f32, vmulq_f32, vst1q_f32};
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
     _mm_add_ps, _mm_loadu_ps, _mm_mul_ps, _mm_set1_ps, _mm_setzero_ps, _mm_storeu_ps,
@@ -360,7 +358,7 @@ fn matched_filter_core_neon(
     y: &[f32],
     h: &mut [f32],
 ) -> MatchedFilterCoreResult {
-    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    #[cfg(target_arch = "aarch64")]
     if detect_neon() {
         unsafe {
             return matched_filter_core_neon_impl(
@@ -564,7 +562,7 @@ unsafe fn matched_filter_core_sse2_impl(
     }
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[target_feature(enable = "neon")]
 unsafe fn matched_filter_core_neon_impl(

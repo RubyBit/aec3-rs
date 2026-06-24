@@ -1,4 +1,4 @@
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 use crate::audio_processing::aec3::aec3_common::detect_neon;
 use crate::audio_processing::aec3::aec3_common::{
     Aec3Optimization, FFT_LENGTH, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1, get_time_domain_length,
@@ -14,8 +14,6 @@ use crate::audio_processing::logging::apm_data_dumper::ApmDataDumper;
 use std::arch::aarch64::{
     vaddq_f32, vld1q_f32, vmaxq_f32, vmlaq_f32, vmlsq_f32, vmulq_f32, vst1q_f32,
 };
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{vaddq_f32, vld1q_f32, vmaxq_f32, vmlaq_f32, vmlsq_f32, vmulq_f32, vst1q_f32};
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
     _mm_add_ps, _mm_loadu_ps, _mm_max_ps, _mm_mul_ps, _mm_storeu_ps, _mm_sub_ps, _mm256_add_ps,
@@ -93,7 +91,7 @@ fn compute_frequency_response_neon(
     h: &[Vec<FftData>],
     h2: &mut Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
 ) {
-    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    #[cfg(target_arch = "aarch64")]
     if detect_neon() {
         unsafe {
             compute_frequency_response_neon_impl(num_partitions, h, h2);
@@ -171,7 +169,7 @@ fn adapt_partitions_neon(
     num_partitions: usize,
     h: &mut [Vec<FftData>],
 ) {
-    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    #[cfg(target_arch = "aarch64")]
     if detect_neon() {
         unsafe {
             adapt_partitions_neon_impl(render_buffer, g, num_partitions, h);
@@ -252,7 +250,7 @@ fn apply_filter_neon(
     h: &[Vec<FftData>],
     s: &mut FftData,
 ) {
-    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    #[cfg(target_arch = "aarch64")]
     if detect_neon() {
         unsafe {
             apply_filter_neon_impl(render_buffer, num_partitions, h, s);
@@ -340,7 +338,7 @@ unsafe fn compute_frequency_response_sse2_impl(
     }
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[target_feature(enable = "neon")]
 unsafe fn compute_frequency_response_neon_impl(
@@ -493,7 +491,7 @@ unsafe fn adapt_partitions_sse2_impl(
     }
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[target_feature(enable = "neon")]
 unsafe fn adapt_partitions_neon_impl(
@@ -668,7 +666,7 @@ unsafe fn apply_filter_sse2_impl(
     }
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[target_feature(enable = "neon")]
 unsafe fn apply_filter_neon_impl(

@@ -128,12 +128,7 @@ pub(crate) fn detect_neon() -> bool {
     std::arch::is_aarch64_feature_detected!("neon")
 }
 
-#[cfg(target_arch = "arm")]
-pub(crate) fn detect_neon() -> bool {
-    std::arch::is_arm_feature_detected!("neon")
-}
-
-#[cfg(not(any(target_arch = "arm", target_arch = "aarch64")))]
+#[cfg(not(target_arch = "aarch64"))]
 pub(crate) fn detect_neon() -> bool {
     false
 }

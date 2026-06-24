@@ -48,12 +48,9 @@ pub fn get_available_cpu_features() -> AvailableCpuFeatures {
         );
     }
 
-    #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     {
-        #[cfg(target_arch = "aarch64")]
         let neon = std::arch::is_aarch64_feature_detected!("neon");
-        #[cfg(target_arch = "arm")]
-        let neon = std::arch::is_arm_feature_detected!("neon");
         return AvailableCpuFeatures::new(false, false, neon);
     }
 

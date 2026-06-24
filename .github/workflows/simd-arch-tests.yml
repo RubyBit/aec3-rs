@@ -25,6 +25,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  armv7-stable-check:
+    name: Stable ARMv7 scalar check (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - armv7-unknown-linux-gnueabihf
+          - armv7-linux-androideabi
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Install stable Rust target
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+          fi
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+          rustc --version
+          cargo --version
+
+      - name: Check ARMv7 scalar build
+        shell: bash
+        run: |
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          cargo check --locked --target ${{ matrix.target }} --lib
+
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -105,16 +156,6 @@ jobs:
               {
                   assert!(
                       std::arch::is_aarch64_feature_detected!("neon"),
-                      "GitHub runner is missing neon support"
-                  );
-                  println!("Detected ARM SIMD support: neon");
-                  return;
-              }
-
-              #[cfg(target_arch = "arm")]
-              {
-                  assert!(
-                      std::arch::is_arm_feature_detected!("neon"),
                       "GitHub runner is missing neon support"
                   );
                   println!("Detected ARM SIMD support: neon");

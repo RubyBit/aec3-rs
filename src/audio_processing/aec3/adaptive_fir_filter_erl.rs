@@ -1,8 +1,8 @@
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+use crate::audio_processing::aec3::aec3_common::FFT_LENGTH_BY_2;
+#[cfg(target_arch = "aarch64")]
 use crate::audio_processing::aec3::aec3_common::detect_neon;
-use crate::audio_processing::aec3::aec3_common::{
-    Aec3Optimization, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1,
-};
+use crate::audio_processing::aec3::aec3_common::{Aec3Optimization, FFT_LENGTH_BY_2_PLUS_1};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
 
@@ -55,7 +55,7 @@ fn compute_erl_sse2(h2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]], erl: &mut [f32; FFT_LE
 }
 
 fn compute_erl_neon(h2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]], erl: &mut [f32; FFT_LENGTH_BY_2_PLUS_1]) {
-    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+    #[cfg(target_arch = "aarch64")]
     if detect_neon() {
         unsafe {
             compute_erl_neon_impl(h2, erl);
@@ -120,10 +120,8 @@ unsafe fn compute_erl_sse2_impl(
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{vaddq_f32, vld1q_f32, vst1q_f32};
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{vaddq_f32, vld1q_f32, vst1q_f32};
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[target_feature(enable = "neon")]
 unsafe fn compute_erl_neon_impl(

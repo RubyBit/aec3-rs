@@ -1,5 +1,5 @@
 use crate::audio_processing::aec3::aec3_common::Aec3Optimization;
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 use crate::audio_processing::aec3::aec3_common::detect_neon;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::audio_processing::aec3::aec3_common::{detect_avx2, detect_sse2};
@@ -67,7 +67,7 @@ impl VectorMath {
     }
 
     fn sqrt_neon(&self, x: &mut [f32]) {
-        #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+        #[cfg(target_arch = "aarch64")]
         if detect_neon() {
             unsafe {
                 sqrt_neon_impl(x);
@@ -100,7 +100,7 @@ impl VectorMath {
     }
 
     fn multiply_neon(&self, x: &[f32], y: &[f32], z: &mut [f32]) {
-        #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+        #[cfg(target_arch = "aarch64")]
         if detect_neon() {
             unsafe {
                 multiply_neon_impl(x, y, z);
@@ -133,7 +133,7 @@ impl VectorMath {
     }
 
     fn accumulate_neon(&self, x: &[f32], z: &mut [f32]) {
-        #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+        #[cfg(target_arch = "aarch64")]
         if detect_neon() {
             unsafe {
                 accumulate_neon_impl(x, z);
@@ -207,8 +207,6 @@ unsafe fn sqrt_sse2_impl(x: &mut [f32]) {
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{vaddq_f32, vld1q_f32, vmulq_f32, vsqrtq_f32, vst1q_f32};
-#[cfg(target_arch = "arm")]
-use std::arch::arm::{vaddq_f32, vld1q_f32, vmulq_f32, vst1q_f32};
 
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -224,13 +222,6 @@ unsafe fn sqrt_neon_impl(x: &mut [f32]) {
     for sample in &mut x[j..] {
         *sample = sample.sqrt();
     }
-}
-
-#[cfg(target_arch = "arm")]
-#[allow(unsafe_op_in_unsafe_fn)]
-#[target_feature(enable = "neon")]
-unsafe fn sqrt_neon_impl(x: &mut [f32]) {
-    sqrt_scalar(x);
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -267,7 +258,7 @@ unsafe fn multiply_sse2_impl(x: &[f32], y: &[f32], z: &mut [f32]) {
     multiply_scalar(&x[j..], &y[j..], &mut z[j..]);
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[target_feature(enable = "neon")]
 unsafe fn multiply_neon_impl(x: &[f32], y: &[f32], z: &mut [f32]) {
@@ -315,7 +306,7 @@ unsafe fn accumulate_sse2_impl(x: &[f32], z: &mut [f32]) {
     accumulate_scalar(&x[j..], &mut z[j..]);
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
+#[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[target_feature(enable = "neon")]
 unsafe fn accumulate_neon_impl(x: &[f32], z: &mut [f32]) {
