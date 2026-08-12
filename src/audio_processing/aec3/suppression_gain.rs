@@ -1,4 +1,4 @@
-use crate::api::config::EchoCanceller3Config;
+use crate::api::config::{EchoCanceller3Config, HighFrequencySuppression};
 use crate::audio_processing::aec3::aec_state::AecState;
 use crate::audio_processing::aec3::aec3_common::{
     Aec3Optimization, BLOCK_SIZE, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_MINUS_1, FFT_LENGTH_BY_2_PLUS_1,
@@ -103,6 +103,7 @@ impl SuppressionGain {
         render_signal_analyzer: &RenderSignalAnalyzer,
         aec_state: &AecState,
         render: &[Vec<Vec<f32>>],
+        clock_drift: bool,
         high_bands_gain: Option<&mut f32>,
         low_band_gain: Option<&mut [f32; FFT_LENGTH_BY_2_PLUS_1]>,
     ) {
@@ -128,6 +129,7 @@ impl SuppressionGain {
             nearend_spectrum,
             residual_echo_spectrum,
             comfort_noise_spectrum,
+            clock_drift,
             low_band_gain,
         );
 
@@ -233,6 +235,7 @@ impl SuppressionGain {
         suppressor_input: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         residual_echo: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         comfort_noise: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
+        clock_drift: bool,
         gain: &mut [f32; FFT_LENGTH_BY_2_PLUS_1],
     ) {
         gain.fill(1.0);
@@ -278,7 +281,18 @@ impl SuppressionGain {
             self.last_echo[ch] = weighted_residual_echo;
         }
 
-        postprocess_gains(gain);
+        limit_low_frequency_gains(gain);
+        // Use conservative high-frequency gains during clock-drift or when not
+        // in dominant nearend.
+        let conservative_hf_suppression = self.config.suppressor.conservative_hf_suppression;
+        if !self.nearend_detector.is_nearend_state() || clock_drift || conservative_hf_suppression {
+            limit_high_frequency_gains(
+                &self.config.suppressor.high_frequency_suppression,
+                conservative_hf_suppression,
+                gain,
+            );
+        }
+
         self.last_gain.copy_from_slice(gain);
         sqrt_in_place(self.optimization, gain);
     }
@@ -400,21 +414,44 @@ fn weight_echo_for_audibility(
     );
 }
 
-fn postprocess_gains(gain: &mut [f32; FFT_LENGTH_BY_2_PLUS_1]) {
+/// Limits the low frequency gains to avoid the impact of the high-pass filter
+/// on the lower-frequency gain influencing the overall achieved gain.
+fn limit_low_frequency_gains(gain: &mut [f32; FFT_LENGTH_BY_2_PLUS_1]) {
     gain[0] = gain[1].min(gain[2]);
     gain[1] = gain[0];
-    const ANTI_ALIASING_IMPACT_LIMIT: usize = (FFT_LENGTH_BY_2 * 2000) / 8000;
-    let min_upper_gain = gain[ANTI_ALIASING_IMPACT_LIMIT];
-    for g in gain[ANTI_ALIASING_IMPACT_LIMIT..FFT_LENGTH_BY_2].iter_mut() {
-        *g = (*g).min(min_upper_gain);
+}
+
+/// Limits the high frequency gains to avoid echo leakage due to an imperfect
+/// filter.
+fn limit_high_frequency_gains(
+    high_frequency_suppression: &HighFrequencySuppression,
+    conservative_hf_suppression: bool,
+    gain: &mut [f32; FFT_LENGTH_BY_2_PLUS_1],
+) {
+    let limiting_gain_band = high_frequency_suppression.limiting_gain_band;
+    let bands_in_limiting_gain = high_frequency_suppression.bands_in_limiting_gain;
+    if bands_in_limiting_gain > 0 {
+        debug_assert!(limiting_gain_band + bands_in_limiting_gain <= FFT_LENGTH_BY_2_PLUS_1);
+        let mut min_upper_gain = 1.0f32;
+        for &g in &gain[limiting_gain_band..limiting_gain_band + bands_in_limiting_gain] {
+            min_upper_gain = min_upper_gain.min(g);
+        }
+        for g in gain[limiting_gain_band + 1..].iter_mut() {
+            *g = (*g).min(min_upper_gain);
+        }
     }
     gain[FFT_LENGTH_BY_2] = gain[FFT_LENGTH_BY_2_MINUS_1];
 
-    const UPPER_ACCURATE_BAND_PLUS1: usize = 29;
-    let one_by_bands = 1.0 / (UPPER_ACCURATE_BAND_PLUS1 - 20) as f32;
-    let hf_gain_bound: f32 = gain[20..UPPER_ACCURATE_BAND_PLUS1].iter().sum::<f32>() * one_by_bands;
-    for g in gain[UPPER_ACCURATE_BAND_PLUS1..].iter_mut() {
-        *g = (*g).min(hf_gain_bound);
+    if conservative_hf_suppression {
+        // Limits the gain in the frequencies for which the adaptive filter has
+        // not converged.
+        const UPPER_ACCURATE_BAND_PLUS1: usize = 29;
+        let one_by_bands = 1.0 / (UPPER_ACCURATE_BAND_PLUS1 - 20) as f32;
+        let hf_gain_bound: f32 =
+            gain[20..UPPER_ACCURATE_BAND_PLUS1].iter().sum::<f32>() * one_by_bands;
+        for g in gain[UPPER_ACCURATE_BAND_PLUS1..].iter_mut() {
+            *g = (*g).min(hf_gain_bound);
+        }
     }
 }
 
@@ -510,6 +547,83 @@ mod tests {
     use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
     use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
 
+    /// The band-29 bound is part of conservative HF suppression, which is off
+    /// by default upstream. Enabling it must not be a no-op, and leaving it off
+    /// must leave the accurate bands untouched.
+    #[test]
+    fn conservative_hf_suppression_gates_the_upper_band_bound() {
+        let hf = HighFrequencySuppression {
+            limiting_gain_band: 16,
+            bands_in_limiting_gain: 1,
+        };
+        // Bands 20..29 average 0.1; band 40 sits well above that bound.
+        let mut gain = [1.0f32; FFT_LENGTH_BY_2_PLUS_1];
+        for g in gain[20..29].iter_mut() {
+            *g = 0.1;
+        }
+
+        let mut unbounded = gain;
+        limit_high_frequency_gains(&hf, false, &mut unbounded);
+        assert!(
+            (unbounded[40] - 1.0).abs() < 1e-6,
+            "band 40 was bounded with conservative_hf_suppression disabled: {}",
+            unbounded[40]
+        );
+
+        let mut bounded = gain;
+        limit_high_frequency_gains(&hf, true, &mut bounded);
+        assert!(
+            (bounded[40] - 0.1).abs() < 1e-6,
+            "band 40 was not bounded with conservative_hf_suppression enabled: {}",
+            bounded[40]
+        );
+    }
+
+    /// Mirrors upstream `LimitHighFrequencyGains`: bands above
+    /// `limiting_gain_band` are capped by the minimum gain within the limiting
+    /// window, and `bands_in_limiting_gain == 0` disables the limiting.
+    #[test]
+    fn high_frequency_limiting_follows_the_configured_window() {
+        let mut gain = [1.0f32; FFT_LENGTH_BY_2_PLUS_1];
+        gain[16] = 0.25;
+
+        let mut limited = gain;
+        limit_high_frequency_gains(
+            &HighFrequencySuppression {
+                limiting_gain_band: 16,
+                bands_in_limiting_gain: 1,
+            },
+            false,
+            &mut limited,
+        );
+        assert!((limited[16] - 0.25).abs() < 1e-6);
+        assert!((limited[17] - 0.25).abs() < 1e-6);
+        assert!((limited[15] - 1.0).abs() < 1e-6, "bands below were modified");
+
+        let mut disabled = gain;
+        limit_high_frequency_gains(
+            &HighFrequencySuppression {
+                limiting_gain_band: 16,
+                bands_in_limiting_gain: 0,
+            },
+            false,
+            &mut disabled,
+        );
+        assert!((disabled[17] - 1.0).abs() < 1e-6);
+    }
+
+    /// Mirrors upstream `LimitLowFrequencyGains`.
+    #[test]
+    fn low_frequency_limiting_matches_reference() {
+        let mut gain = [1.0f32; FFT_LENGTH_BY_2_PLUS_1];
+        gain[1] = 0.5;
+        gain[2] = 0.3;
+        limit_low_frequency_gains(&mut gain);
+        assert!((gain[0] - 0.3).abs() < 1e-6);
+        assert!((gain[1] - 0.3).abs() < 1e-6);
+        assert!((gain[2] - 0.3).abs() < 1e-6);
+    }
+
     #[test]
     #[should_panic]
     fn null_output_gains_panics() {
@@ -520,7 +634,8 @@ mod tests {
         let analyzer = RenderSignalAnalyzer::new(&config);
         let aec_state = AecState::new(config, 1);
         gain.get_gain(
-            &spectrum, &spectrum, &spectrum, &spectrum, &analyzer, &aec_state, &render, None, None,
+            &spectrum, &spectrum, &spectrum, &spectrum, &analyzer, &aec_state, &render, false,
+            None, None,
         );
     }
 
@@ -608,6 +723,7 @@ mod tests {
                 &analyzer,
                 &aec_state,
                 &render,
+                false,
                 Some(&mut high_bands_gain),
                 Some(&mut low_band_gain),
             );
@@ -643,6 +759,7 @@ mod tests {
                 &analyzer,
                 &aec_state,
                 &render,
+                false,
                 Some(&mut high_bands_gain),
                 Some(&mut low_band_gain),
             );
@@ -663,6 +780,7 @@ mod tests {
                 &analyzer,
                 &aec_state,
                 &render,
+                false,
                 Some(&mut high_bands_gain),
                 Some(&mut low_band_gain),
             );

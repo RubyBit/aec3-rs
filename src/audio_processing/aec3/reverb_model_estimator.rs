@@ -16,7 +16,9 @@ impl ReverbModelEstimator {
         let mut frequency_responses = Vec::with_capacity(num_capture_channels);
         for _ in 0..num_capture_channels {
             decay_estimators.push(ReverbDecayEstimator::new(config));
-            frequency_responses.push(ReverbFrequencyResponse::new());
+            frequency_responses.push(ReverbFrequencyResponse::new(
+                config.ep_strength.use_conservative_tail_frequency_response,
+            ));
         }
         Self {
             reverb_decay_estimators: decay_estimators,

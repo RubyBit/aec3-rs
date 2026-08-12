@@ -18,6 +18,7 @@ pub struct EchoCanceller3Config {
     pub transparent_mode: TransparentModeConfig,
     pub echo_model: EchoModel,
     pub suppressor: Suppressor,
+    pub multi_channel: MultiChannel,
 }
 
 impl Default for EchoCanceller3Config {
@@ -34,11 +35,35 @@ impl Default for EchoCanceller3Config {
             transparent_mode: TransparentModeConfig::default(),
             echo_model: EchoModel::default(),
             suppressor: Suppressor::default(),
+            multi_channel: MultiChannel::default(),
         }
     }
 }
 
 impl EchoCanceller3Config {
+    /// Produces the default configuration for multichannel render
+    /// content.
+    ///
+    /// Mirrors `EchoCanceller3Config::CreateDefaultMultichannelConfig`. Pass
+    /// the result as the multichannel config when constructing
+    /// [`EchoCanceller3`](crate::EchoCanceller3); it is selected only while
+    /// proper stereo content is detected.
+    pub fn create_default_multichannel_config() -> Self {
+        let mut cfg = Self::default();
+        // Use a shorter and more rapidly adapting coarse ("shadow") filter to
+        // compensate for the increased number of total filter parameters to
+        // adapt.
+        cfg.filter.shadow.length_blocks = 11;
+        cfg.filter.shadow.rate = 0.95;
+        cfg.filter.shadow_initial.length_blocks = 11;
+        cfg.filter.shadow_initial.rate = 0.95;
+
+        // Use more conservative suppressor behavior for non-nearend speech.
+        cfg.suppressor.normal_tuning.max_dec_factor_lf = 0.35;
+        cfg.suppressor.normal_tuning.max_inc_factor = 1.5;
+        cfg
+    }
+
     /// Validates the configuration by clamping all fields to the same ranges as the
     /// reference implementation. Returns true iff no field required adjustment.
     pub fn validate(&mut self) -> bool {
@@ -310,6 +335,21 @@ impl EchoCanceller3Config {
             1.0,
         );
 
+        res &= limit_usize(
+            &mut c.suppressor.high_frequency_suppression.limiting_gain_band,
+            1,
+            64,
+        );
+        let limiting_gain_band = c.suppressor.high_frequency_suppression.limiting_gain_band;
+        res &= limit_usize(
+            &mut c
+                .suppressor
+                .high_frequency_suppression
+                .bands_in_limiting_gain,
+            0,
+            64 - limiting_gain_band,
+        );
+
         res &= limit_f32(&mut c.suppressor.floor_first_increase, 0.0, 1_000_000.0);
 
         res
@@ -507,6 +547,10 @@ pub struct EpStrength {
     pub default_len: f32,
     pub echo_can_saturate: bool,
     pub bounded_erl: bool,
+    /// Raises the estimated reverb tail frequency response to at least the
+    /// measured tail of the linear filter, rather than trusting the decay
+    /// extrapolation alone.
+    pub use_conservative_tail_frequency_response: bool,
 }
 
 impl Default for EpStrength {
@@ -516,6 +560,7 @@ impl Default for EpStrength {
             default_len: 0.83,
             echo_can_saturate: true,
             bounded_erl: false,
+            use_conservative_tail_frequency_response: true,
         }
     }
 }
@@ -612,6 +657,9 @@ pub struct EchoModel {
     pub noise_gate_slope: f32,
     pub render_pre_window_size: usize,
     pub render_post_window_size: usize,
+    /// Adds the modelled reverb to the residual echo estimate while the
+    /// nonlinear echo model is in use.
+    pub model_reverb_in_nonlinear_mode: bool,
 }
 
 impl Default for EchoModel {
@@ -624,6 +672,7 @@ impl Default for EchoModel {
             noise_gate_slope: 0.3,
             render_pre_window_size: 1,
             render_post_window_size: 1,
+            model_reverb_in_nonlinear_mode: true,
         }
     }
 }
@@ -637,7 +686,14 @@ pub struct Suppressor {
     pub subband_nearend_detection: SubbandNearendDetection,
     pub use_subband_nearend_detection: bool,
     pub high_bands_suppression: HighBandsSuppression,
+    pub high_frequency_suppression: HighFrequencySuppression,
     pub floor_first_increase: f32,
+    /// Additionally bounds the high-frequency gains by the average gain of the
+    /// bands the adaptive filter estimates accurately.
+    ///
+    /// When enabled, high-frequency gain limiting is also applied
+    /// unconditionally rather than only outside the dominant-nearend state.
+    pub conservative_hf_suppression: bool,
 }
 
 impl Default for Suppressor {
@@ -678,7 +734,12 @@ impl Default for Suppressor {
                 anti_howling_activation_threshold: 400.0,
                 anti_howling_gain: 1.0,
             },
+            high_frequency_suppression: HighFrequencySuppression {
+                limiting_gain_band: 16,
+                bands_in_limiting_gain: 1,
+            },
             floor_first_increase: 0.00001,
+            conservative_hf_suppression: false,
         }
     }
 }
@@ -755,6 +816,48 @@ pub struct HighBandsSuppression {
     pub max_gain_during_echo: f32,
     pub anti_howling_activation_threshold: f32,
     pub anti_howling_gain: f32,
+}
+
+/// Controls detection of multichannel render content.
+///
+/// Render signals are frequently upmixed mono, in which case adapting one
+/// filter per render channel costs convergence speed for no benefit. When
+/// stereo content is detected, [`EchoCanceller3`](crate::EchoCanceller3)
+/// switches to the multichannel config, if one was supplied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultiChannel {
+    /// When false, the render channel count alone decides whether the signal is
+    /// treated as multichannel, and no detection is performed.
+    pub detect_stereo_content: bool,
+    /// Maximum absolute inter-channel difference still considered upmixed mono.
+    pub stereo_detection_threshold: f32,
+    /// Time without stereo content after which the detection is reset. Values
+    /// of zero or less disable the timeout, latching detection for the lifetime
+    /// of the detector.
+    pub stereo_detection_timeout_threshold_seconds: i32,
+    /// Duration of continuous stereo content required before it is considered
+    /// persistent.
+    pub stereo_detection_hysteresis_seconds: f32,
+}
+
+impl Default for MultiChannel {
+    fn default() -> Self {
+        Self {
+            detect_stereo_content: true,
+            stereo_detection_threshold: 0.0,
+            stereo_detection_timeout_threshold_seconds: 300,
+            stereo_detection_hysteresis_seconds: 2.0,
+        }
+    }
+}
+
+/// Bounds the gains above `limiting_gain_band` by the smallest gain found in
+/// the `bands_in_limiting_gain` bands starting at `limiting_gain_band`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HighFrequencySuppression {
+    pub limiting_gain_band: usize,
+    /// Setting this to zero disables the limiting.
+    pub bands_in_limiting_gain: usize,
 }
 
 fn limit_f32(value: &mut f32, min_value: f32, max_value: f32) -> bool {

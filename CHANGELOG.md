@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-12
+
+### Added
+- Multichannel content detection: `MultiChannelContentDetector` classifies
+  render content as stereo or upmixed mono, and `ConfigSelector` picks
+  the config to match. Ported from WebRTC with their unit tests.
+- `multi_channel` config section: `detect_stereo_content` (`true`),
+  `stereo_detection_threshold` (`0.0`),
+  `stereo_detection_timeout_threshold_seconds` (`300`),
+  `stereo_detection_hysteresis_seconds` (`2.0`).
+- `EchoCanceller3::with_multichannel_config` and
+  `EchoCanceller3Config::create_default_multichannel_config`.
+- `suppressor.conservative_hf_suppression` (`false`) and
+  `suppressor.high_frequency_suppression.{limiting_gain_band,
+  bands_in_limiting_gain}` (`16`, `1`), which parameterise the previously
+  hardcoded gain limiting window.
+- `echo_model.model_reverb_in_nonlinear_mode` (`true`) and
+  `ep_strength.use_conservative_tail_frequency_response` (`true`).
+
+### Changed
+- Behaviour: the render signal is processed in mono unless multichannel content
+  is detected, instead of always using the constructor's channel count. A
+  temporary-stereo downmix averages the channels rather than taking channel 0.
+- Behaviour: high-frequency gain limiting is applied only outside the
+  dominant-nearend state, on clock drift, or under
+  `conservative_hf_suppression`, it previously ran on every block and
+  over-suppressed during doubletalk.
+- Behaviour: the band-29 upper gain bound is now part of
+  `conservative_hf_suppression` and off by default; it was always applied.
+- Behaviour: `use_conservative_tail_frequency_response` raises the reverb tail
+  estimate to the measured filter tail. The step was missing, so the tail could
+  be underestimated.
+- The `Aec3` node defaults to the reference multichannel config when the caller
+  sets none; a caller-provided config is used for both modes.
+
+### Deprecated
+- `EchoCanceller3::create_default_config`, which picks tuning from the render
+  channel count alone and so applies the multichannel tuning to upmixed mono.
+  Use `EchoCanceller3::with_multichannel_config`.
+
 ## [0.3.1] - 2026-06-24
 
 ### Fixed
@@ -96,7 +136,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ###### TODO: Add past versions as well and also go back and tag releases to reference here
 
-[unreleased]: https://github.com/RubyBit/aec3-rs/compare/v0.3.1..HEAD
+[unreleased]: https://github.com/RubyBit/aec3-rs/compare/v0.3.2..HEAD
+[0.3.2]: https://github.com/RubyBit/aec3-rs/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/RubyBit/aec3-rs/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/RubyBit/aec3-rs/compare/v0.2.1...v0.3.0
 [0.2.0]: https://github.com/RubyBit/aec3-rs/compare/v0.1.8...v0.2.0

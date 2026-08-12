@@ -2,6 +2,7 @@ use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::thread;
 
+use aec3::api::config::EchoCanceller3Config;
 use aec3::api::control::EchoControl;
 use aec3::audio_processing::stream_config::StreamConfig;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -40,9 +41,15 @@ fn processing_thread(
     channels: usize,
 ) {
     // Create AEC instance for the given channels.
-    let cfg = EchoCanceller3::create_default_config(channels, channels);
+    let cfg = EchoCanceller3Config::default();
     //cfg.delay.use_external_delay_estimator = false;
-    let mut aec3 = EchoCanceller3::new(cfg, sample_rate as i32, channels, channels);
+    let mut aec3 = EchoCanceller3::with_multichannel_config(
+        cfg,
+        Some(EchoCanceller3Config::create_default_multichannel_config()),
+        sample_rate as i32,
+        channels,
+        channels,
+    );
 
     // AudioBuffer used for conversion
     let mut audio_buf =
@@ -151,13 +158,13 @@ fn main() -> Result<()> {
     // Build input stream
     let in_config = cpal::StreamConfig {
         channels: channels as u16,
-        sample_rate: cpal::SampleRate(sample_rate_hz as u32),
+        sample_rate: sample_rate_hz as u32,
         buffer_size: cpal::BufferSize::Fixed(frames_per_buffer as u32),
     };
 
     let tx_in_clone = tx_in.clone();
     let input_stream = input_device.build_input_stream(
-        &in_config,
+        in_config,
         move |data: &[f32], _| {
             // Copy data and send to processing thread
             let vec = data.to_vec();
@@ -170,13 +177,13 @@ fn main() -> Result<()> {
     // Build output stream
     let out_config = cpal::StreamConfig {
         channels: channels as u16,
-        sample_rate: cpal::SampleRate(sample_rate_hz as u32),
+        sample_rate: sample_rate_hz as u32,
         buffer_size: cpal::BufferSize::Fixed(frames_per_buffer as u32),
     };
 
     let tx_render_clone = tx_render.clone();
     let output_stream = output_device.build_output_stream(
-        &out_config,
+        out_config,
         move |out: &mut [f32], _| {
             // Try to get processed frame; if none, output silence
             let frame_to_play = if let Ok(frame) = rx_out.try_recv() {

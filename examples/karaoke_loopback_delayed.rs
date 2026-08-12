@@ -106,7 +106,7 @@ fn main() -> Result<()> {
 
     let loopback_supported = output_device.default_output_config()?;
     let loopback_stream_config: cpal::StreamConfig = loopback_supported.clone().into();
-    let sample_rate_hz = loopback_stream_config.sample_rate.0;
+    let sample_rate_hz = loopback_stream_config.sample_rate;
     let channels = loopback_stream_config.channels;
     let frames_per_buffer = (sample_rate_hz / 100) as usize;
 
@@ -120,12 +120,12 @@ fn main() -> Result<()> {
 
     let io_config = cpal::StreamConfig {
         channels,
-        sample_rate: cpal::SampleRate(sample_rate_hz),
+        sample_rate: sample_rate_hz,
         buffer_size: cpal::BufferSize::Fixed(frames_per_buffer as u32),
     };
 
     let input_stream = input_device.build_input_stream(
-        &io_config,
+        io_config.clone(),
         move |data: &[f32], _| {
             let _ = tx_capture.try_send(data.to_vec());
         },
@@ -134,7 +134,7 @@ fn main() -> Result<()> {
     )?;
 
     let loopback_stream = output_device.build_input_stream(
-        &loopback_stream_config,
+        loopback_stream_config,
         move |data: &[f32], _| {
             let _ = tx_render.try_send(data.to_vec());
         },
@@ -146,7 +146,7 @@ fn main() -> Result<()> {
     let playback_delay_buffers =
         std::cmp::max(1usize, (sample_rate_hz as usize * 3) / frames_per_buffer);
     let output_stream = output_device.build_output_stream(
-        &io_config,
+        io_config,
         move |out: &mut [f32], _| {
             while let Ok(frame) = rx_output.try_recv() {
                 playback_queue.push_back(frame);

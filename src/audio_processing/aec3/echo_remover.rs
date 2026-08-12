@@ -323,6 +323,8 @@ impl EchoRemover {
 
         let mut high_bands_gain = 1.0f32;
         let mut gain = [1.0f32; FFT_LENGTH_BY_2_PLUS_1];
+        let clock_drift =
+            self.config.echo_removal_control.has_clock_drift || echo_path_variability.clock_drift;
         self.suppression_gain.get_gain(
             nearend_spectrum,
             echo_spectrum,
@@ -331,6 +333,7 @@ impl EchoRemover {
             &self.render_signal_analyzer,
             &self.aec_state,
             render_block,
+            clock_drift,
             Some(&mut high_bands_gain),
             Some(&mut gain),
         );

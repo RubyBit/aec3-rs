@@ -246,18 +246,28 @@ impl NodeFactory for Aec3Factory {
         );
 
         let internal_rate = internal_sample_rate(self.capture_format, Some(self.render_format));
-        let mut config = self.config.unwrap_or_else(|| {
-            EchoCanceller3::create_default_config(
-                self.render_format.channels as usize,
-                self.capture_format.channels as usize,
-            )
-        });
+        // A default multichannel config is supplied only when the caller set no
+        // config: if the caller provides a non-multichannel config, that config
+        // is used for both mono and multichannel echo cancellation.
+        let (mut config, mut multichannel_config) = match self.config {
+            Some(config) => (config, None),
+            None => (
+                EchoCanceller3Config::default(),
+                Some(EchoCanceller3Config::create_default_multichannel_config()),
+            ),
+        };
         if self.linear_out.is_some() {
+            // Both configs must agree on this field, since the linear output is
+            // set up outside the switchable part of the pipeline.
             config.filter.export_linear_aec_output = true;
+            if let Some(multichannel_config) = multichannel_config.as_mut() {
+                multichannel_config.filter.export_linear_aec_output = true;
+            }
         }
 
         let echo = Aec3Runner::build_echo(
             config.clone(),
+            multichannel_config.clone(),
             internal_rate,
             self.render_format.channels as usize,
             self.capture_format.channels as usize,
@@ -267,6 +277,7 @@ impl NodeFactory for Aec3Factory {
 
         Ok(Box::new(Aec3Runner {
             config,
+            multichannel_config,
             internal_rate,
             render_channels: self.render_format.channels as usize,
             capture_channels: self.capture_format.channels as usize,
@@ -292,6 +303,7 @@ impl NodeFactory for Aec3Factory {
 
 struct Aec3Runner {
     config: EchoCanceller3Config,
+    multichannel_config: Option<EchoCanceller3Config>,
     internal_rate: usize,
     render_channels: usize,
     capture_channels: usize,
@@ -312,16 +324,19 @@ struct Aec3Runner {
 }
 
 impl Aec3Runner {
+    #[allow(clippy::too_many_arguments)]
     fn build_echo(
         config: EchoCanceller3Config,
+        multichannel_config: Option<EchoCanceller3Config>,
         internal_rate: usize,
         render_channels: usize,
         capture_channels: usize,
         diagnostics_enabled: bool,
         delay_ms: Option<i32>,
     ) -> EchoCanceller3 {
-        let mut echo = EchoCanceller3::new(
+        let mut echo = EchoCanceller3::with_multichannel_config(
             config,
+            multichannel_config,
             internal_rate as i32,
             render_channels,
             capture_channels,
@@ -372,6 +387,7 @@ impl NodeRunner for Aec3Runner {
     fn reset(&mut self) -> GraphResult<()> {
         self.echo = Self::build_echo(
             self.config.clone(),
+            self.multichannel_config.clone(),
             self.internal_rate,
             self.render_channels,
             self.capture_channels,

@@ -1,15 +1,19 @@
+use crate::api::config::EpStrength;
+
 use super::aec3_common::FFT_LENGTH_BY_2_PLUS_1;
 
 pub struct ReverbFrequencyResponse {
     average_decay: f32,
     tail_response: [f32; FFT_LENGTH_BY_2_PLUS_1],
+    use_conservative_tail_frequency_response: bool,
 }
 
 impl ReverbFrequencyResponse {
-    pub fn new() -> Self {
+    pub fn new(use_conservative_tail_frequency_response: bool) -> Self {
         Self {
             average_decay: 0.0,
             tail_response: [0.0; FFT_LENGTH_BY_2_PLUS_1],
+            use_conservative_tail_frequency_response,
         }
     }
 
@@ -58,6 +62,11 @@ impl ReverbFrequencyResponse {
         for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
             self.tail_response[k] = freq_resp_direct_path[k] * self.average_decay;
         }
+        if self.use_conservative_tail_frequency_response {
+            for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
+                self.tail_response[k] = freq_resp_tail[k].max(self.tail_response[k]);
+            }
+        }
         if FFT_LENGTH_BY_2_PLUS_1 > 2 {
             for k in 1..FFT_LENGTH_BY_2_PLUS_1 - 1 {
                 let avg_neighbour =
@@ -85,6 +94,6 @@ fn average_decay_within_filter(
 
 impl Default for ReverbFrequencyResponse {
     fn default() -> Self {
-        Self::new()
+        Self::new(EpStrength::default().use_conservative_tail_frequency_response)
     }
 }

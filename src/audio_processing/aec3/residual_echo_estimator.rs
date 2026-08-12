@@ -78,7 +78,9 @@ impl ResidualEchoEstimator {
                 non_linear_estimate(echo_path_gain, &x2, r2);
             }
 
-            if !aec_state.transparent_mode() {
+            if self.config.echo_model.model_reverb_in_nonlinear_mode
+                && !aec_state.transparent_mode()
+            {
                 self.add_reverb(ReverbType::NonLinear, aec_state, render_buffer, r2);
             }
         }

@@ -1,3 +1,4 @@
+use aec3::api::config::EchoCanceller3Config;
 use aec3::api::control::EchoControl;
 use aec3::audio_processing::aec3::echo_canceller3::EchoCanceller3;
 use aec3::audio_processing::audio_buffer::AudioBuffer;
@@ -9,8 +10,13 @@ use aec3::audio_processing::audio_buffer::AudioBuffer;
 fn simple_integration_processes_render_and_capture() {
     let sample_rate_hz: i32 = 16_000;
     let sample_rate = sample_rate_hz as usize;
-    let config = EchoCanceller3::create_default_config(2, 2);
-    let mut aec3 = EchoCanceller3::new(config, sample_rate_hz, 2, 2);
+    let mut aec3 = EchoCanceller3::with_multichannel_config(
+        EchoCanceller3Config::default(),
+        Some(EchoCanceller3Config::create_default_multichannel_config()),
+        sample_rate_hz,
+        2,
+        2,
+    );
 
     // Create buffers for 16 kHz stereo (160 samples per channel).
     let mut render = AudioBuffer::from_sample_rates(sample_rate, 2, sample_rate, 2, sample_rate);

@@ -12,7 +12,9 @@ use crate::audio_processing::aec3::api_call_jitter_metrics::ApiCallJitterMetrics
 use crate::audio_processing::aec3::block_delay_buffer::BlockDelayBuffer;
 use crate::audio_processing::aec3::block_framer::BlockFramer;
 use crate::audio_processing::aec3::block_processor::BlockProcessor;
+use crate::audio_processing::aec3::config_selector::ConfigSelector;
 use crate::audio_processing::aec3::frame_blocker::FrameBlocker;
+use crate::audio_processing::aec3::multi_channel_content_detector::MultiChannelContentDetector;
 use crate::audio_processing::audio_buffer::AudioBuffer;
 use crate::audio_processing::high_pass_filter::HighPassFilter;
 use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, DiagnosticLevel};
@@ -147,10 +149,16 @@ impl RenderWriter {
 
 pub struct EchoCanceller3 {
     data_dumper: ApmDataDumper,
-    config: EchoCanceller3Config,
+    config_selector: ConfigSelector,
+    multichannel_content_detector: MultiChannelContentDetector,
     sample_rate_hz: i32,
     num_bands: usize,
-    num_render_channels: usize,
+    /// Number of render channels supplied through the API.
+    num_render_input_channels: usize,
+    /// Number of render channels actually processed: either
+    /// `num_render_input_channels` when proper multichannel content is
+    /// detected, or 1, with the render signal downmixed.
+    num_render_channels_to_aec: usize,
     num_capture_channels: usize,
     export_linear_output: bool,
     render_writer: RenderWriter,
@@ -174,46 +182,64 @@ pub struct EchoCanceller3 {
 
 impl EchoCanceller3 {
     pub fn new(
-        mut config: EchoCanceller3Config,
-        sample_rate_hz: i32,
-        num_render_channels: usize,
-        num_capture_channels: usize,
-    ) -> Self {
-        config = adjust_config(config);
-        let block_processor = Box::new(BlockProcessor::new(
-            config.clone(),
-            sample_rate_hz,
-            num_render_channels,
-            num_capture_channels,
-        ));
-        Self::with_block_processor(
-            config,
-            sample_rate_hz,
-            num_render_channels,
-            num_capture_channels,
-            block_processor,
-        )
-    }
-
-    fn with_block_processor(
         config: EchoCanceller3Config,
         sample_rate_hz: i32,
         num_render_channels: usize,
         num_capture_channels: usize,
-        block_processor: Box<dyn BlockProcessorBackend>,
+    ) -> Self {
+        Self::with_multichannel_config(
+            config,
+            None,
+            sample_rate_hz,
+            num_render_channels,
+            num_capture_channels,
+        )
+    }
+
+    /// Creates an echo canceller that switches to `multichannel_config` while
+    /// multichannel render content is detected.
+    ///
+    /// The two configs must agree on `delay.fixed_capture_delay_samples`,
+    /// `filter.export_linear_aec_output`, `multi_channel.detect_stereo_content`
+    /// and `multi_channel.stereo_detection_timeout_threshold_seconds`, since
+    /// those are applied outside the switchable part of the pipeline.
+    pub fn with_multichannel_config(
+        config: EchoCanceller3Config,
+        multichannel_config: Option<EchoCanceller3Config>,
+        sample_rate_hz: i32,
+        num_render_channels: usize,
+        num_capture_channels: usize,
     ) -> Self {
         assert!(valid_full_band_rate(sample_rate_hz));
         let num_bands = num_bands_for_rate(sample_rate_hz);
         assert!(num_bands > 0 && num_bands <= MAX_NUM_BANDS);
 
+        let config = adjust_config(config);
+        let multichannel_config = multichannel_config.map(adjust_config);
+
+        let config_selector =
+            ConfigSelector::new(config, multichannel_config, num_render_channels);
+        let multichannel_content_detector = {
+            let active = config_selector.active_config();
+            MultiChannelContentDetector::new(
+                active.multi_channel.detect_stereo_content,
+                num_render_channels,
+                active.multi_channel.stereo_detection_threshold,
+                active.multi_channel.stereo_detection_timeout_threshold_seconds,
+                active.multi_channel.stereo_detection_hysteresis_seconds,
+            )
+        };
+
         let data_dumper = ApmDataDumper::new_unique();
         let render_writer = RenderWriter::new(data_dumper.clone(), num_bands, num_render_channels);
         let render_transfer_queue = SwapQueue::new(RENDER_TRANSFER_QUEUE_SIZE_FRAMES);
-        let render_blocker = FrameBlocker::new(num_bands, num_render_channels);
         let capture_blocker = FrameBlocker::new(num_bands, num_capture_channels);
         let output_framer = BlockFramer::new(num_bands, num_capture_channels);
 
-        let export_linear_output = config.filter.export_linear_aec_output;
+        let export_linear_output = config_selector
+            .active_config()
+            .filter
+            .export_linear_aec_output;
         let linear_output_framer = export_linear_output
             .then(|| BlockFramer::new(LINEAR_OUTPUT_BANDS, num_capture_channels));
         let linear_output_block = export_linear_output
@@ -223,23 +249,48 @@ impl EchoCanceller3 {
 
         let render_queue_output_frame =
             allocate_tensor(num_bands, num_render_channels, AudioBuffer::SPLIT_BAND_SIZE);
-        let render_block = allocate_tensor(num_bands, num_render_channels, BLOCK_SIZE);
         let capture_block = allocate_tensor(num_bands, num_capture_channels, BLOCK_SIZE);
         let capture_sub_frame = allocate_tensor(num_bands, num_capture_channels, SUB_FRAME_LENGTH);
-        let render_sub_frame = allocate_tensor(num_bands, num_render_channels, SUB_FRAME_LENGTH);
 
         let block_delay_buffer = BlockDelayBuffer::new(
             num_bands,
             AudioBuffer::SPLIT_BAND_SIZE,
-            config.delay.fixed_capture_delay_samples,
+            config_selector
+                .active_config()
+                .delay
+                .fixed_capture_delay_samples,
         );
+
+        // The render path is sized to the channel count actually processed.
+        // `ConfigSelector` was constructed with this same detection state, so
+        // this matches what `initialize` computes; it is inlined here only to
+        // avoid building a block processor that would be immediately replaced.
+        let num_render_channels_to_aec = if multichannel_content_detector
+            .is_proper_multi_channel_content_detected()
+        {
+            num_render_channels
+        } else {
+            1
+        };
+        let render_blocker = FrameBlocker::new(num_bands, num_render_channels_to_aec);
+        let render_block = allocate_tensor(num_bands, num_render_channels_to_aec, BLOCK_SIZE);
+        let render_sub_frame =
+            allocate_tensor(num_bands, num_render_channels_to_aec, SUB_FRAME_LENGTH);
+        let block_processor: Box<dyn BlockProcessorBackend> = Box::new(BlockProcessor::new(
+            config_selector.active_config().clone(),
+            sample_rate_hz,
+            num_render_channels_to_aec,
+            num_capture_channels,
+        ));
 
         Self {
             data_dumper,
-            config,
+            config_selector,
+            multichannel_content_detector,
             sample_rate_hz,
             num_bands,
-            num_render_channels,
+            num_render_input_channels: num_render_channels,
+            num_render_channels_to_aec,
             num_capture_channels,
             export_linear_output,
             render_writer,
@@ -260,6 +311,65 @@ impl EchoCanceller3 {
             api_call_metrics: ApiCallJitterMetrics::new(),
             saturated_microphone_signal: false,
         }
+    }
+
+    /// Injects a block processor, mirroring the reference's
+    /// `SetBlockProcessorForTesting`.
+    ///
+    /// Note that a later change in multichannel content detection re-runs
+    /// [`Self::initialize`] and replaces the injected processor, exactly as in
+    /// the reference.
+    #[cfg(test)]
+    fn with_block_processor(
+        config: EchoCanceller3Config,
+        sample_rate_hz: i32,
+        num_render_channels: usize,
+        num_capture_channels: usize,
+        block_processor: Box<dyn BlockProcessorBackend>,
+    ) -> Self {
+        let mut aec3 = Self::new(
+            config,
+            sample_rate_hz,
+            num_render_channels,
+            num_capture_channels,
+        );
+        aec3.block_processor = block_processor;
+        aec3
+    }
+
+    /// Sizes the render path to the number of channels actually processed and
+    /// (re)creates the block processor with the currently active config.
+    fn initialize(&mut self) {
+        let multichannel_content_detected = self
+            .multichannel_content_detector
+            .is_proper_multi_channel_content_detected();
+
+        self.num_render_channels_to_aec = if multichannel_content_detected {
+            self.num_render_input_channels
+        } else {
+            1
+        };
+
+        self.config_selector.update(multichannel_content_detected);
+
+        self.render_block = allocate_tensor(
+            self.num_bands,
+            self.num_render_channels_to_aec,
+            BLOCK_SIZE,
+        );
+        self.render_sub_frame = allocate_tensor(
+            self.num_bands,
+            self.num_render_channels_to_aec,
+            SUB_FRAME_LENGTH,
+        );
+        self.render_blocker = FrameBlocker::new(self.num_bands, self.num_render_channels_to_aec);
+
+        self.block_processor = Box::new(BlockProcessor::new(
+            self.config_selector.active_config().clone(),
+            self.sample_rate_hz,
+            self.num_render_channels_to_aec,
+            self.num_capture_channels,
+        ));
     }
 
     pub fn update_echo_leakage_status(&mut self, leakage_detected: bool) {
@@ -295,26 +405,32 @@ impl EchoCanceller3 {
         self.data_dumper.initiate_new_set_of_recordings();
     }
 
+    /// Picks a config from the render channel count alone.
+    ///
+    /// This has no equivalent in the reference. It predates multichannel
+    /// content detection and applies the multichannel tuning to *every* stream
+    /// with more than one render channel, including upmixed mono — which is
+    /// what the detector exists to avoid.
+    #[deprecated(
+        since = "0.3.2",
+        note = "pass EchoCanceller3Config::default() and \
+                EchoCanceller3Config::create_default_multichannel_config() to \
+                EchoCanceller3::with_multichannel_config instead, which applies \
+                the multichannel tuning only while stereo content is detected"
+    )]
     pub fn create_default_config(
         num_render_channels: usize,
         num_capture_channels: usize,
     ) -> EchoCanceller3Config {
-        let mut cfg = EchoCanceller3Config::default();
-        if num_render_channels > 1 {
-            cfg.filter.shadow.length_blocks = 11;
-            cfg.filter.shadow.rate = 0.95;
-            cfg.filter.shadow_initial.length_blocks = 11;
-            cfg.filter.shadow_initial.rate = 0.95;
-            cfg.suppressor.normal_tuning.max_dec_factor_lf = 0.35;
-            cfg.suppressor.normal_tuning.max_inc_factor = 1.5;
-        }
-        // Silence unused parameter warning to mirror reference signature.
         let _ = num_capture_channels;
-        cfg
+        if num_render_channels > 1 {
+            return EchoCanceller3Config::create_default_multichannel_config();
+        }
+        EchoCanceller3Config::default()
     }
 
     fn analyze_render_internal(&mut self, render: &AudioBuffer) {
-        assert_eq!(self.num_render_channels, render.num_channels());
+        assert_eq!(self.num_render_input_channels, render.num_channels());
         assert_eq!(self.num_bands, render.num_bands());
         assert_eq!(AudioBuffer::SPLIT_BAND_SIZE, render.num_frames_per_band());
 
@@ -376,7 +492,13 @@ impl EchoCanceller3 {
 
         self.api_call_metrics.report_capture_call();
 
-        if self.config.delay.fixed_capture_delay_samples > 0 {
+        if self
+            .config_selector
+            .active_config()
+            .delay
+            .fixed_capture_delay_samples
+            > 0
+        {
             self.block_delay_buffer.delay_signal(capture);
         }
 
@@ -483,9 +605,26 @@ impl EchoCanceller3 {
         while let Some(frame) = self.render_transfer_queue.remove() {
             self.api_call_metrics.report_render_call();
             self.render_queue_output_frame = frame;
+
+            if self
+                .multichannel_content_detector
+                .update_detection(&self.render_queue_output_frame)
+            {
+                // Reinitialize the AEC when proper stereo is detected.
+                self.initialize();
+            }
+
+            // When the echo canceller processes mono but the render signal
+            // carries stereo, downmix by averaging rather than by
+            // selecting channel 0.
+            let proper_downmix_needed = self
+                .multichannel_content_detector
+                .is_temporary_multi_channel_content_detected();
+
             for sub_frame_index in 0..SUB_FRAMES_PER_FRAME {
                 fill_tensor_sub_frame(
                     &self.render_queue_output_frame,
+                    proper_downmix_needed,
                     sub_frame_index,
                     &mut self.render_sub_frame,
                 );
@@ -619,8 +758,42 @@ fn write_audio_buffer_sub_frame(
     }
 }
 
-fn fill_tensor_sub_frame(frame: &Tensor3, sub_frame_index: usize, storage: &mut Tensor3) {
+fn fill_tensor_sub_frame(
+    frame: &Tensor3,
+    proper_downmix_needed: bool,
+    sub_frame_index: usize,
+    storage: &mut Tensor3,
+) {
     let offset = sub_frame_index * SUB_FRAME_LENGTH;
+    let frame_num_channels = frame[0].len();
+    let sub_frame_num_channels = storage[0].len();
+
+    if frame_num_channels > sub_frame_num_channels {
+        debug_assert_eq!(sub_frame_num_channels, 1);
+        for band in 0..frame.len() {
+            let destination = &mut storage[band][0];
+            destination.copy_from_slice(&frame[band][0][offset..offset + SUB_FRAME_LENGTH]);
+            if proper_downmix_needed {
+                // When a proper downmix is needed (which is the case when
+                // proper stereo is present in the echo reference signal but the
+                // echo canceller does the processing in mono) downmix the echo
+                // reference by averaging the channel content (otherwise
+                // downmixing is done by selecting channel 0).
+                for channel in 1..frame_num_channels {
+                    let source = &frame[band][channel][offset..offset + SUB_FRAME_LENGTH];
+                    for k in 0..SUB_FRAME_LENGTH {
+                        destination[k] += source[k];
+                    }
+                }
+                let one_by_num_channels = 1.0 / frame_num_channels as f32;
+                for value in destination.iter_mut() {
+                    *value *= one_by_num_channels;
+                }
+            }
+        }
+        return;
+    }
+
     for band in 0..frame.len() {
         debug_assert_eq!(frame[band].len(), storage[band].len());
         for channel in 0..frame[band].len() {
@@ -1283,5 +1456,143 @@ mod tests {
                 EchoCanceller3Tester::new(rate).run_echo_leakage_verification_test(variant);
             }
         }
+    }
+
+    /// Drives `num_frames` render frames through the canceller, writing
+    /// `values[ch]` into every sample of render channel `ch`.
+    fn feed_render_frames(aec3: &mut EchoCanceller3, values: &[f32], num_frames: usize) {
+        let num_channels = values.len();
+        let fullband_frame_length = 16_000 / 100;
+        let mut render = AudioBuffer::new(
+            fullband_frame_length,
+            num_channels,
+            fullband_frame_length,
+            num_channels,
+            fullband_frame_length,
+        );
+        let mut capture = AudioBuffer::new(
+            fullband_frame_length,
+            1,
+            fullband_frame_length,
+            1,
+            fullband_frame_length,
+        );
+
+        for _ in 0..num_frames {
+            for (ch, &value) in values.iter().enumerate() {
+                render.channel_mut(ch).fill(value);
+            }
+            aec3.analyze_render(&mut render);
+            aec3.analyze_capture(&mut capture);
+            aec3.process_capture(&mut capture, false);
+        }
+    }
+
+    /// Upmixed mono render content must keep the canceller in the mono
+    /// configuration, and stereo must switch it to the multichannel one.
+    #[test]
+    fn multichannel_config_is_selected_only_for_stereo() {
+        let mut multichannel_config = EchoCanceller3Config::create_default_multichannel_config();
+        // Distinguish the two configs by a field the selector does not require
+        // to match, so the active one can be identified.
+        multichannel_config.delay.default_delay += 1;
+        let mono_default_delay = EchoCanceller3Config::default().delay.default_delay;
+
+        // Detection is hysteresis-limited to 2 seconds by default, so drive
+        // enough frames to cross it.
+        const NUM_FRAMES: usize = 300;
+
+        let mut aec3 = EchoCanceller3::with_multichannel_config(
+            EchoCanceller3Config::default(),
+            Some(multichannel_config.clone()),
+            16_000,
+            2,
+            1,
+        );
+        feed_render_frames(&mut aec3, &[0.5, 0.5], NUM_FRAMES);
+        assert!(
+            !aec3
+                .multichannel_content_detector
+                .is_proper_multi_channel_content_detected(),
+            "upmixed mono was treated as stereo"
+        );
+        assert_eq!(aec3.num_render_channels_to_aec, 1);
+        assert_eq!(
+            aec3.config_selector.active_config().delay.default_delay,
+            mono_default_delay
+        );
+
+        let mut aec3 = EchoCanceller3::with_multichannel_config(
+            EchoCanceller3Config::default(),
+            Some(multichannel_config.clone()),
+            16_000,
+            2,
+            1,
+        );
+        feed_render_frames(&mut aec3, &[0.5, -0.5], NUM_FRAMES);
+        assert!(
+            aec3.multichannel_content_detector
+                .is_proper_multi_channel_content_detected(),
+            "stereo was not detected"
+        );
+        assert_eq!(aec3.num_render_channels_to_aec, 2);
+        assert_eq!(
+            aec3.config_selector.active_config().delay.default_delay,
+            multichannel_config.delay.default_delay
+        );
+    }
+
+    /// Without a multichannel config the render path still collapses to mono
+    /// for upmixed content and expands once stereo appears.
+    #[test]
+    fn render_channel_count_tracks_detection_without_multichannel_config() {
+        const NUM_FRAMES: usize = 300;
+
+        let mut aec3 = EchoCanceller3::new(EchoCanceller3Config::default(), 16_000, 2, 1);
+        feed_render_frames(&mut aec3, &[0.5, 0.5], NUM_FRAMES);
+        assert_eq!(aec3.num_render_channels_to_aec, 1);
+
+        feed_render_frames(&mut aec3, &[0.5, -0.5], NUM_FRAMES);
+        assert_eq!(aec3.num_render_channels_to_aec, 2);
+    }
+
+    /// Downmixing to mono averages the channels when a proper downmix is
+    /// requested, and selects channel 0 otherwise.
+    #[test]
+    fn sub_frame_downmix_averages_only_when_requested() {
+        let frame: Tensor3 = vec![vec![
+            vec![1.0f32; 2 * super::SUB_FRAME_LENGTH],
+            vec![3.0f32; 2 * super::SUB_FRAME_LENGTH],
+        ]];
+
+        let mut storage: Tensor3 = vec![vec![vec![0.0f32; super::SUB_FRAME_LENGTH]]];
+        super::fill_tensor_sub_frame(&frame, false, 0, &mut storage);
+        assert!(
+            storage[0][0].iter().all(|&v| v == 1.0),
+            "channel 0 should be selected verbatim without a proper downmix"
+        );
+
+        super::fill_tensor_sub_frame(&frame, true, 0, &mut storage);
+        assert!(
+            storage[0][0].iter().all(|&v| v == 2.0),
+            "a proper downmix should average the channels"
+        );
+
+        // The second sub-frame must be downmixed from its own sample range.
+        super::fill_tensor_sub_frame(&frame, true, 1, &mut storage);
+        assert!(storage[0][0].iter().all(|&v| v == 2.0));
+    }
+
+    /// With detection disabled the channel count is fixed by the API, matching
+    /// the reference's behaviour when `detect_stereo_content` is false.
+    #[test]
+    fn detection_disabled_keeps_all_render_channels() {
+        let mut config = EchoCanceller3Config::default();
+        config.multi_channel.detect_stereo_content = false;
+
+        let mut aec3 = EchoCanceller3::new(config, 16_000, 2, 1);
+        assert_eq!(aec3.num_render_channels_to_aec, 2);
+        feed_render_frames(&mut aec3, &[0.5, 0.5], 50);
+        assert_eq!(aec3.num_render_channels_to_aec, 2);
     }
 }
