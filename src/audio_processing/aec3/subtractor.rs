@@ -9,6 +9,7 @@ use crate::audio_processing::aec3::aec3_common::{
     get_time_domain_length,
 };
 use crate::audio_processing::aec3::aec3_fft::{Aec3Fft, Window};
+use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::echo_path_variability::{DelayAdjustment, EchoPathVariability};
 use crate::audio_processing::aec3::fft_data::FftData;
 use crate::audio_processing::aec3::main_filter_update_gain::MainFilterUpdateGain;
@@ -113,12 +114,12 @@ impl Subtractor {
     pub fn process(
         &mut self,
         render_buffer: &RenderBuffer<'_>,
-        capture: &[Vec<f32>],
+        capture: &Block,
         render_signal_analyzer: &RenderSignalAnalyzer,
         aec_state: &AecState,
         outputs: &mut [SubtractorOutput],
     ) {
-        assert_eq!(self.num_capture_channels, capture.len());
+        assert_eq!(self.num_capture_channels, capture.num_channels());
         assert_eq!(self.num_capture_channels, outputs.len());
 
         let same_filter_sizes =
@@ -146,7 +147,7 @@ impl Subtractor {
         }
 
         for ch in 0..self.num_capture_channels {
-            let y = &capture[ch];
+            let y = capture.view(0, ch);
             assert_eq!(BLOCK_SIZE, y.len());
             let output = &mut outputs[ch];
             let mut s_freq = FftData::default();
@@ -556,8 +557,8 @@ mod tests {
         let delay_estimate: Option<DelayEstimate> = None;
 
         let num_bands = num_bands_for_rate(SAMPLE_RATE_HZ);
-        let mut x = vec![vec![vec![0.0f32; BLOCK_SIZE]; num_render_channels]; num_bands];
-        let mut y = vec![vec![0.0f32; BLOCK_SIZE]; num_capture_channels];
+        let mut x = Block::new(num_bands, num_render_channels);
+        let mut y = Block::new(1, num_capture_channels);
         let mut output = vec![SubtractorOutput::new(); num_capture_channels];
         let mut rng = Random::new(42);
 
@@ -586,20 +587,21 @@ mod tests {
 
         for block_idx in 0..num_blocks_to_process {
             for render_ch in 0..num_render_channels {
-                randomize_sample_vector(&mut rng, &mut x[0][render_ch]);
+                randomize_sample_vector(&mut rng, x.view_mut(0, render_ch));
             }
             if uncorrelated_inputs {
                 for capture_ch in 0..num_capture_channels {
-                    randomize_sample_vector(&mut rng, &mut y[capture_ch]);
+                    randomize_sample_vector(&mut rng, y.view_mut(0, capture_ch));
                 }
             } else {
                 for capture_ch in 0..num_capture_channels {
-                    y[capture_ch].fill(0.0);
+                    y.view_mut(0, capture_ch).fill(0.0);
                     for render_ch in 0..num_render_channels {
                         let mut y_channel = [0.0f32; BLOCK_SIZE];
-                        delay_buffers[capture_ch][render_ch]
-                            .delay(&x[0][render_ch], &mut y_channel);
-                        for (dst, src) in y[capture_ch].iter_mut().zip(y_channel.iter()) {
+                        let source = *x.view(0, render_ch);
+                        delay_buffers[capture_ch][render_ch].delay(&source, &mut y_channel);
+                        for (dst, src) in y.view_mut(0, capture_ch).iter_mut().zip(y_channel.iter())
+                        {
                             *dst += *src / num_render_channels as f32;
                         }
                     }
@@ -607,10 +609,10 @@ mod tests {
             }
 
             for ch in 0..num_render_channels {
-                x_hp_filters[ch].process_in_place(&mut x[0][ch]);
+                x_hp_filters[ch].process_in_place(x.view_mut(0, ch));
             }
             for ch in 0..num_capture_channels {
-                y_hp_filters[ch].process_in_place(&mut y[ch]);
+                y_hp_filters[ch].process_in_place(y.view_mut(0, ch));
             }
 
             render_delay_buffer.insert(&x);
@@ -662,7 +664,7 @@ mod tests {
                 .zip(output[ch].e_main.iter())
                 .map(|(a, b)| a * b)
                 .sum();
-            let y_power: f32 = y[ch].iter().map(|sample| sample * sample).sum();
+            let y_power: f32 = y.view(0, ch).iter().map(|sample| sample * sample).sum();
             if y_power == 0.0 {
                 results.push(-1.0);
             } else {

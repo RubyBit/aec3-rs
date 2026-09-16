@@ -6,6 +6,10 @@
 //!
 //! `render reference + microphone capture -> high-pass filter -> AEC3 -> noise suppression -> AGC2`
 //!
+//! A fullband post filter runs after AGC2, as in the reference. It is only
+//! active at 48 kHz and can be turned off with
+//! [`LinearPipelineBuilder::enable_post_filter`].
+//!
 //! This module builds that graph for you and exposes it as a frame-oriented API.
 //! All audio frames are interleaved `f32` samples and must contain exactly 10 ms
 //! of audio for their [`AudioFormat`].
@@ -60,14 +64,14 @@ use crate::graph::{
 use crate::nodes::{
     aec3, agc2,
     audio::{AudioChunk, AudioFormat},
-    hpf, ns,
+    hpf, ns, post_filter,
 };
 
 /// Builder for the standard linear voice pipeline.
 ///
 /// The default pipeline enables high-pass filtering, AEC3, noise suppression,
-/// and AGC2. Optional ports such as AEC3 metrics and linear output are disabled
-/// until explicitly requested.
+/// AGC2, and the fullband post filter. Optional ports such as AEC3 metrics and
+/// linear output are disabled until explicitly requested.
 #[derive(Debug, Clone)]
 pub struct LinearPipelineBuilder {
     render_format: AudioFormat,
@@ -79,6 +83,7 @@ pub struct LinearPipelineBuilder {
     enable_high_pass_filter: bool,
     enable_noise_suppression: bool,
     enable_gain_controller2: bool,
+    enable_post_filter: bool,
     export_linear_output: bool,
     export_metrics: bool,
     initial_delay_ms: Option<i32>,
@@ -112,6 +117,8 @@ pub struct LinearPipelineHandles {
     pub noise_suppression: Option<ns::NoiseSuppressorNode>,
     /// AGC2 node, when enabled.
     pub gain_controller2: Option<agc2::Agc2Node>,
+    /// Fullband post filter node, when enabled.
+    pub post_filter: Option<post_filter::PostFilterNode>,
 }
 
 /// Frame-oriented runtime wrapper for the standard linear voice pipeline.
@@ -143,6 +150,7 @@ pub fn builder(render_format: AudioFormat, capture_format: AudioFormat) -> Linea
         enable_high_pass_filter: true,
         enable_noise_suppression: true,
         enable_gain_controller2: true,
+        enable_post_filter: true,
         export_linear_output: false,
         export_metrics: false,
         initial_delay_ms: None,
@@ -198,6 +206,15 @@ impl LinearPipelineBuilder {
     /// Enabled by default.
     pub fn enable_gain_controller2(mut self, enable: bool) -> Self {
         self.enable_gain_controller2 = enable;
+        self
+    }
+
+    /// Enables or disables the fullband post filter after AGC2, which removes
+    /// content above 19.5 kHz. Only active at 48 kHz.
+    ///
+    /// Enabled by default, as in the reference.
+    pub fn enable_post_filter(mut self, enable: bool) -> Self {
+        self.enable_post_filter = enable;
         self
     }
 
@@ -300,6 +317,15 @@ impl LinearPipelineBuilder {
             None
         };
 
+        let post_filter = if self.enable_post_filter {
+            let filter = post_filter::builder(self.capture_format).add_to(graph)?;
+            graph.connect(output_port, filter.audio_in)?;
+            output_port = filter.audio_out;
+            Some(filter)
+        } else {
+            None
+        };
+
         graph.connect(output_port, output)?;
 
         let linear_output = if self.export_linear_output {
@@ -338,6 +364,7 @@ impl LinearPipelineBuilder {
             aec3,
             noise_suppression,
             gain_controller2,
+            post_filter,
         })
     }
 
@@ -432,6 +459,14 @@ impl LinearPipeline {
     /// Resets the AGC2 state when that stage is enabled.
     pub fn reset_gain_controller2(&mut self) -> GraphResult<()> {
         match self.handles.gain_controller2 {
+            Some(node) => self.runtime.reset_node(node.node_id()),
+            None => Ok(()),
+        }
+    }
+
+    /// Resets the post filter state when that stage is enabled.
+    pub fn reset_post_filter(&mut self) -> GraphResult<()> {
+        match self.handles.post_filter {
             Some(node) => self.runtime.reset_node(node.node_id()),
             None => Ok(()),
         }

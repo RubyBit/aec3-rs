@@ -9,6 +9,7 @@ pub mod gain_controller2;
 pub mod high_pass_filter;
 pub mod logging;
 pub mod ns;
+pub mod post_filter;
 pub mod resampler;
 pub mod sparse_fir_filter;
 pub mod splitting_filter;

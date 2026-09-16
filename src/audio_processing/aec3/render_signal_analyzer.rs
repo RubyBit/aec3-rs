@@ -137,12 +137,13 @@ fn identify_strong_narrow_band_component(
             non_peak_power = non_peak_power.max(spectrum[k]);
         }
 
-        let mut max_abs = x_latest[0][channel]
+        let mut max_abs = x_latest
+            .view(0, channel)
             .iter()
             .copied()
             .fold(0.0f32, |acc, sample| acc.max(sample.abs()));
-        if x_latest.len() > 1 {
-            let band = &x_latest[1][channel];
+        if x_latest.num_bands() > 1 {
+            let band = x_latest.view(1, channel);
             max_abs = max_abs.max(
                 band.iter()
                     .copied()
@@ -168,6 +169,7 @@ mod tests {
     use crate::audio_processing::aec3::aec3_common::{
         BLOCK_SIZE, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1, num_bands_for_rate,
     };
+    use crate::audio_processing::aec3::block::Block;
     use crate::audio_processing::aec3::block_buffer::BlockBuffer;
     use crate::audio_processing::aec3::fft_buffer::FftBuffer;
     use crate::audio_processing::aec3::render_buffer::RenderBuffer;
@@ -181,11 +183,13 @@ mod tests {
     #[test]
     fn detects_narrow_band_when_delay_known() {
         let config = EchoCanceller3Config::default();
-        let mut block_buffer = BlockBuffer::new(8, 1, 1, BLOCK_SIZE);
+        let mut block_buffer = BlockBuffer::new(8, 1, 1);
         let mut spectrum_buffer = SpectrumBuffer::new(8, 1);
         let fft_buffer = FftBuffer::new(8, 1);
 
-        block_buffer.buffer[block_buffer.read][0][0].fill(150.0);
+        block_buffer.buffer[block_buffer.read]
+            .view_mut(0, 0)
+            .fill(150.0);
         let peak_bin = 10;
         for bin in 0..FFT_LENGTH_BY_2_PLUS_1 {
             spectrum_buffer.buffer[spectrum_buffer.read][0][bin] =
@@ -217,11 +221,11 @@ mod tests {
         sinusoidal_frequency_hz: f32,
         rng: &mut Random,
         sample_counter: &mut usize,
-        block: &mut [Vec<Vec<f32>>],
+        block: &mut Block,
     ) {
-        for band in block.iter_mut() {
-            for channel in band.iter_mut() {
-                randomize_sample_vector_with_amplitude(rng, channel, 500.0);
+        for band in 0..block.num_bands() {
+            for channel in 0..block.num_channels() {
+                randomize_sample_vector_with_amplitude(rng, block.view_mut(band, channel), 500.0);
             }
         }
 
@@ -229,25 +233,19 @@ mod tests {
             let angle =
                 2.0f32 * std::f32::consts::PI * sinusoidal_frequency_hz * (sample_index as f32)
                     / sample_rate_hz as f32;
-            block[0][sinusoid_channel][j] += 32_000.0 * angle.sin();
+            block.view_mut(0, sinusoid_channel)[j] += 32_000.0 * angle.sin();
         }
         *sample_counter += BLOCK_SIZE;
     }
 
-    fn make_block(num_bands: usize, num_channels: usize) -> Vec<Vec<Vec<f32>>> {
-        (0..num_bands)
-            .map(|_| {
-                (0..num_channels)
-                    .map(|_| vec![0.0f32; BLOCK_SIZE])
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>()
+    fn make_block(num_bands: usize, num_channels: usize) -> Block {
+        Block::new(num_bands, num_channels)
     }
 
     fn run_narrow_band_detection_sequence(
         analyzer: &mut RenderSignalAnalyzer,
         render_delay_buffer: &mut RenderDelayBuffer,
-        block: &mut Vec<Vec<Vec<f32>>>,
+        block: &mut Block,
         rng: &mut Random,
         num_channels: usize,
         known_delay: bool,
@@ -264,7 +262,7 @@ mod tests {
                 &mut sample_counter,
                 block,
             );
-            render_delay_buffer.insert(&block[..]);
+            render_delay_buffer.insert(block);
             if iteration == 0 {
                 render_delay_buffer.reset();
             }
@@ -287,7 +285,7 @@ mod tests {
             for iteration in 0..100 {
                 for band in 0..num_bands {
                     for channel in 0..num_channels {
-                        randomize_sample_vector(&mut rng, &mut block[band][channel]);
+                        randomize_sample_vector(&mut rng, block.view_mut(band, channel));
                     }
                 }
                 render_delay_buffer.insert(&block);

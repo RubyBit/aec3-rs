@@ -1,36 +1,26 @@
+use crate::audio_processing::aec3::block::Block;
+
 /// Bundles a circular buffer of multi-band, multi-channel blocks together
 /// with read/write indices. Mirrors the behavior of the reference
 /// implementation in `block_buffer.{h,cc}`.
 pub struct BlockBuffer {
     size: usize,
-    pub buffer: Vec<Vec<Vec<Vec<f32>>>>,
+    pub buffer: Vec<Block>,
     pub write: usize,
     pub read: usize,
 }
 
 impl BlockBuffer {
-    pub fn new(size: usize, num_bands: usize, num_channels: usize, frame_length: usize) -> Self {
+    pub fn new(size: usize, num_bands: usize, num_channels: usize) -> Self {
         assert!(size > 0);
         assert!(num_bands > 0);
         assert!(num_channels > 0);
-        assert!(frame_length > 0);
-
-        let mut buffer = Vec::with_capacity(size);
-        for _ in 0..size {
-            let mut bands = Vec::with_capacity(num_bands);
-            for _ in 0..num_bands {
-                let mut channels = Vec::with_capacity(num_channels);
-                for _ in 0..num_channels {
-                    channels.push(vec![0.0f32; frame_length]);
-                }
-                bands.push(channels);
-            }
-            buffer.push(bands);
-        }
 
         Self {
             size,
-            buffer,
+            buffer: (0..size)
+                .map(|_| Block::new(num_bands, num_channels))
+                .collect(),
             write: 0,
             read: 0,
         }

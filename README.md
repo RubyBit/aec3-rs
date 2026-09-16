@@ -25,7 +25,7 @@ Highlights
 - Side inputs for nodes like noise suppression without hardcoding one pipeline shape
 - Shared packet handles and copy-on-write audio buffers to minimize copying on fan-out paths
 - Runtime node control states and resets for bypass/freeze/reinitialize workflows
-- `aec3::pipelines::linear` for the common `render + capture -> HFP -> AEC3 -> NS -> AGC2` path
+- `aec3::pipelines::linear` for the common `render + capture -> HFP -> AEC3 -> NS -> AGC2` path, with an optional fullband post filter
 - Strong typing for ordinary wiring, plus runtime validation for graph invariants and format mismatches
 
 Quick start
@@ -61,6 +61,7 @@ The crate is organized around three top-level modules:
   - `agc2`: gain control node
   - `ns`: noise suppression node
   - `hpf`: high-pass filter node
+  - `post_filter`: fullband post-processing filter node (48 kHz; pass-through below)
   - `resample`: explicit sample-rate / channel adaptation
   - `tap`: packet fan-out without forcing eager copies
 - `aec3::pipelines`
@@ -240,6 +241,7 @@ Built-in node patterns
 - Duplex echo cancellation: `capture + render -> aec3 -> sink`
 - Side-channel analysis: `aec3.linear_out -> ns.analysis_in`
 - Common voice chain: `pipelines::linear::builder(render, capture)`
+- Fullband cleanup after gain control: append `nodes::post_filter`
 - Explicit format adaptation: insert `nodes::resample`
 - Fan-out: insert `nodes::tap` or connect one output to multiple downstream ports
 

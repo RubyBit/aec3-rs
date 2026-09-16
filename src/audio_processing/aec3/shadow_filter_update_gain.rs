@@ -123,6 +123,7 @@ mod tests {
         detect_optimization, num_bands_for_rate,
     };
     use crate::audio_processing::aec3::aec3_fft::{Aec3Fft, Window};
+    use crate::audio_processing::aec3::block::Block;
     use crate::audio_processing::aec3::fft_data::FftData;
     use crate::audio_processing::aec3::render_delay_buffer::RenderDelayBuffer;
     use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
@@ -136,14 +137,8 @@ mod tests {
         g_last_block: FftData,
     }
 
-    fn make_render_block(num_bands: usize, num_channels: usize) -> Vec<Vec<Vec<f32>>> {
-        (0..num_bands)
-            .map(|_| {
-                (0..num_channels)
-                    .map(|_| vec![0.0f32; BLOCK_SIZE])
-                    .collect::<Vec<_>>()
-            })
-            .collect()
+    fn make_render_block(num_bands: usize, num_channels: usize) -> Block {
+        Block::new(num_bands, num_channels)
     }
 
     fn run_filter_update_test(
@@ -196,11 +191,12 @@ mod tests {
 
             for band in 0..num_bands {
                 for channel in 0..num_render_channels {
-                    randomize_sample_vector(&mut rng, &mut x[band][channel]);
+                    randomize_sample_vector(&mut rng, x.view_mut(band, channel));
                 }
             }
 
-            delay_buffer.delay(&x[0][0], &mut y);
+            let source = *x.view(0, 0);
+            delay_buffer.delay(&source, &mut y);
             render_delay_buffer.insert(&x);
             if block_idx == 0 {
                 render_delay_buffer.reset();

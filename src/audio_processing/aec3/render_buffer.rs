@@ -3,6 +3,7 @@ use super::block_buffer::BlockBuffer;
 use super::fft_buffer::FftBuffer;
 use super::fft_data::FftData;
 use super::spectrum_buffer::SpectrumBuffer;
+use crate::audio_processing::aec3::block::Block;
 
 /// Provides a coherent view over the block, spectrum, and FFT buffers.
 pub struct RenderBuffer<'a> {
@@ -31,7 +32,7 @@ impl<'a> RenderBuffer<'a> {
         }
     }
 
-    pub fn block(&self, buffer_offset_blocks: isize) -> &Vec<Vec<Vec<f32>>> {
+    pub fn block(&self, buffer_offset_blocks: isize) -> &Block {
         let position = self
             .block_buffer
             .offset_index(self.block_buffer.read, buffer_offset_blocks);
@@ -130,11 +131,11 @@ impl<'a> RenderBuffer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_processing::aec3::aec3_common::{BLOCK_SIZE, FFT_LENGTH_BY_2_PLUS_1};
+    use crate::audio_processing::aec3::aec3_common::FFT_LENGTH_BY_2_PLUS_1;
 
     #[test]
     fn spectral_sum_accumulates_channels() {
-        let block_buffer = BlockBuffer::new(4, 1, 2, BLOCK_SIZE);
+        let block_buffer = BlockBuffer::new(4, 1, 2);
         let mut spectrum_buffer = SpectrumBuffer::new(4, 2);
         let fft_buffer = FftBuffer::new(4, 2);
 
@@ -160,7 +161,7 @@ mod tests {
 
     #[test]
     fn spectral_sums_produces_consistent_results() {
-        let block_buffer = BlockBuffer::new(4, 1, 1, BLOCK_SIZE);
+        let block_buffer = BlockBuffer::new(4, 1, 1);
         let mut spectrum_buffer = SpectrumBuffer::new(4, 1);
         let fft_buffer = FftBuffer::new(4, 1);
 

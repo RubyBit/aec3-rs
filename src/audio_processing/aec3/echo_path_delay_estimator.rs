@@ -4,6 +4,7 @@ use crate::audio_processing::aec3::aec3_common::{
     MATCHED_FILTER_WINDOW_SIZE_SUB_BLOCKS, NUM_BLOCKS_PER_SECOND, detect_optimization,
 };
 use crate::audio_processing::aec3::alignment_mixer::AlignmentMixer;
+use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::clockdrift_detector::{ClockDriftDetector, ClockDriftLevel};
 use crate::audio_processing::aec3::decimator::Decimator;
 use crate::audio_processing::aec3::delay_estimate::{DelayEstimate, DelayEstimateQuality};
@@ -55,6 +56,7 @@ impl EchoPathDelayEstimator {
             MATCHED_FILTER_ALIGNMENT_SHIFT_SIZE_SUB_BLOCKS,
             excitation_limit,
             config.delay.delay_estimate_smoothing,
+            config.delay.delay_estimate_smoothing_delay_found,
             config.delay.delay_candidate_detection_threshold,
         );
         let matched_filter_lag_aggregator = MatchedFilterLagAggregator::new(
@@ -84,11 +86,8 @@ impl EchoPathDelayEstimator {
     pub fn estimate_delay(
         &mut self,
         render_buffer: &DownsampledRenderBuffer,
-        capture: &[Vec<f32>],
+        capture: &Block,
     ) -> Option<DelayEstimate> {
-        debug_assert!(!capture.is_empty());
-        debug_assert_eq!(capture[0].len(), BLOCK_SIZE);
-
         let mut downmixed_capture = [0.0f32; BLOCK_SIZE];
         self.capture_mixer
             .produce_output(capture, &mut downmixed_capture);
@@ -106,8 +105,11 @@ impl EchoPathDelayEstimator {
             1,
         );
 
-        self.matched_filter
-            .update(render_buffer, downsampled_capture);
+        self.matched_filter.update(
+            render_buffer,
+            downsampled_capture,
+            self.matched_filter_lag_aggregator.reliable_delay_found(),
+        );
 
         let mut aggregated = self
             .matched_filter_lag_aggregator
@@ -182,10 +184,8 @@ mod tests {
 
     const SAMPLE_RATE_HZ: i32 = 48_000;
 
-    fn make_render_block(num_bands: usize, num_channels: usize) -> Vec<Vec<Vec<f32>>> {
-        (0..num_bands)
-            .map(|_| vec![vec![0.0f32; BLOCK_SIZE]; num_channels])
-            .collect()
+    fn make_render_block(num_bands: usize, num_channels: usize) -> Block {
+        Block::new(num_bands, num_channels)
     }
 
     #[test]
@@ -198,7 +198,7 @@ mod tests {
                     RenderDelayBuffer::new(config.clone(), SAMPLE_RATE_HZ, num_render_channels);
                 let mut estimator = EchoPathDelayEstimator::new(&config, num_capture_channels);
                 let mut render_block = make_render_block(num_bands, num_render_channels);
-                let capture_block = vec![vec![0.0f32; BLOCK_SIZE]; num_capture_channels];
+                let capture_block = Block::new(1, num_capture_channels);
 
                 for _ in 0..100 {
                     buffer.insert(&render_block);
@@ -207,7 +207,7 @@ mod tests {
                 }
 
                 // Prevent compiler from optimizing away mutable usage.
-                render_block[0][0][0] = 0.0;
+                render_block.view_mut(0, 0)[0] = 0.0;
             }
         }
     }
@@ -231,14 +231,14 @@ mod tests {
                     RenderDelayBuffer::new(config.clone(), SAMPLE_RATE_HZ, NUM_RENDER_CHANNELS);
                 let mut estimator = EchoPathDelayEstimator::new(&config, NUM_CAPTURE_CHANNELS);
                 let mut render_block = make_render_block(num_bands, NUM_RENDER_CHANNELS);
-                let mut capture_block = vec![vec![0.0f32; BLOCK_SIZE]; NUM_CAPTURE_CHANNELS];
+                let mut capture_block = Block::new(1, NUM_CAPTURE_CHANNELS);
                 let mut delay_buffer = DelayBuffer::<f32>::new(delay_samples);
                 let mut estimated_delay = None;
                 let iterations = 500 + delay_samples / BLOCK_SIZE;
 
                 for k in 0..iterations {
-                    randomize_sample_vector(&mut rng, &mut render_block[0][0]);
-                    delay_buffer.delay(&render_block[0][0], &mut capture_block[0]);
+                    randomize_sample_vector(&mut rng, render_block.view_mut(0, 0));
+                    delay_buffer.delay(render_block.view(0, 0), capture_block.view_mut(0, 0));
                     buffer.insert(&render_block);
                     if k == 0 {
                         buffer.reset();
@@ -277,14 +277,15 @@ mod tests {
             RenderDelayBuffer::new(config.clone(), SAMPLE_RATE_HZ, NUM_RENDER_CHANNELS);
         let mut estimator = EchoPathDelayEstimator::new(&config, NUM_CAPTURE_CHANNELS);
         let mut render_block = make_render_block(num_bands, NUM_RENDER_CHANNELS);
-        let mut capture_block = vec![vec![0.0f32; BLOCK_SIZE]; NUM_CAPTURE_CHANNELS];
+        let mut capture_block = Block::new(1, NUM_CAPTURE_CHANNELS);
 
         for _ in 0..100 {
-            randomize_sample_vector(&mut rng, &mut render_block[0][0]);
-            for sample in &mut render_block[0][0] {
+            randomize_sample_vector(&mut rng, render_block.view_mut(0, 0));
+            for sample in render_block.view_mut(0, 0).iter_mut() {
                 *sample *= 100.0 / 32767.0;
             }
-            capture_block[0].copy_from_slice(&render_block[0][0]);
+            let source = *render_block.view(0, 0);
+            capture_block.view_mut(0, 0).copy_from_slice(&source);
             buffer.insert(&render_block);
             buffer.prepare_capture_processing();
             assert!(

@@ -5,6 +5,7 @@ use crate::audio_processing::aec3::aec3_common::{
 };
 use crate::audio_processing::aec3::aec3_fft::Aec3Fft;
 use crate::audio_processing::aec3::alignment_mixer::AlignmentMixer;
+use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::block_buffer::BlockBuffer;
 use crate::audio_processing::aec3::decimator::Decimator;
 use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
@@ -71,7 +72,7 @@ impl RenderDelayBuffer {
         let num_bands = num_bands_for_rate(sample_rate_hz);
         assert!(num_bands > 0, "Unsupported sample rate {sample_rate_hz}");
 
-        let blocks = BlockBuffer::new(buffer_size, num_bands, num_render_channels, BLOCK_SIZE);
+        let blocks = BlockBuffer::new(buffer_size, num_bands, num_render_channels);
         let spectra = SpectrumBuffer::new(buffer_size, num_render_channels);
         let ffts = FftBuffer::new(buffer_size, num_render_channels);
         let low_rate = DownsampledRenderBuffer::new(get_down_sampled_buffer_size(
@@ -145,7 +146,7 @@ impl RenderDelayBuffer {
         }
     }
 
-    pub fn insert(&mut self, block: &[Vec<Vec<f32>>]) -> BufferingEvent {
+    pub fn insert(&mut self, block: &Block) -> BufferingEvent {
         self.render_call_counter += 1;
         if self.delay.is_some() {
             if !self.last_call_was_render {
@@ -167,7 +168,7 @@ impl RenderDelayBuffer {
         }
 
         if !self.render_activity_pending {
-            if self.detect_active_render(&block[0][0]) {
+            if self.detect_active_render(block.view(0, 0)) {
                 self.render_activity_counter += 1;
                 if self.render_activity_counter >= 20 {
                     self.render_activity_pending = true;
@@ -318,18 +319,21 @@ impl RenderDelayBuffer {
         self.ffts.read = self.ffts.offset_index(self.ffts.write, delay);
     }
 
-    fn insert_block(&mut self, block: &[Vec<Vec<f32>>], previous_write: usize) {
-        let num_bands = self.blocks.buffer[self.blocks.write].len();
-        assert_eq!(block.len(), num_bands);
+    fn insert_block(&mut self, block: &Block, previous_write: usize) {
+        let write = self.blocks.write;
+        let num_bands = self.blocks.buffer[write].num_bands();
+        let num_channels = self.blocks.buffer[write].num_channels();
+        assert_eq!(block.num_bands(), num_bands);
+        assert_eq!(block.num_channels(), num_channels);
+        let gain = self.render_linear_amplitude_gain;
+        let apply_gain = (gain - 1.0).abs() > f32::EPSILON;
         for band in 0..num_bands {
-            let num_channels = self.blocks.buffer[self.blocks.write][band].len();
-            assert_eq!(block[band].len(), num_channels);
             for ch in 0..num_channels {
-                assert_eq!(block[band][ch].len(), BLOCK_SIZE);
-                self.blocks.buffer[self.blocks.write][band][ch].copy_from_slice(&block[band][ch]);
-                if (self.render_linear_amplitude_gain - 1.0).abs() > f32::EPSILON {
-                    for sample in &mut self.blocks.buffer[self.blocks.write][band][ch] {
-                        *sample *= self.render_linear_amplitude_gain;
+                let dst = self.blocks.buffer[write].view_mut(band, ch);
+                dst.copy_from_slice(block.view(band, ch));
+                if apply_gain {
+                    for sample in dst.iter_mut() {
+                        *sample *= gain;
                     }
                 }
             }
@@ -337,7 +341,7 @@ impl RenderDelayBuffer {
 
         let mut downmixed = [0.0f32; BLOCK_SIZE];
         self.render_mixer
-            .produce_output(&self.blocks.buffer[self.blocks.write][0], &mut downmixed);
+            .produce_output(&self.blocks.buffer[write], &mut downmixed);
         self.render_decimator
             .decimate(&downmixed, &mut self.render_ds);
         self.data_dumper.dump_wav(
@@ -353,10 +357,10 @@ impl RenderDelayBuffer {
             self.low_rate.buffer[self.low_rate.write + i] = sample;
         }
 
-        let num_channels = self.blocks.buffer[self.blocks.write][0].len();
+        let num_channels = self.blocks.buffer[self.blocks.write].num_channels();
         for ch in 0..num_channels {
-            let current = &self.blocks.buffer[self.blocks.write][0][ch];
-            let previous = &self.blocks.buffer[previous_write][0][ch];
+            let current = self.blocks.buffer[self.blocks.write].view(0, ch);
+            let previous = self.blocks.buffer[previous_write].view(0, ch);
             self.fft.padded_fft(
                 current,
                 previous,
@@ -455,14 +459,8 @@ mod tests {
     use super::num_bands_for_rate;
     use super::*;
 
-    fn make_block(num_bands: usize, num_channels: usize) -> Vec<Vec<Vec<f32>>> {
-        (0..num_bands)
-            .map(|_| {
-                (0..num_channels)
-                    .map(|_| vec![0.0f32; BLOCK_SIZE])
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>()
+    fn make_block(num_bands: usize, num_channels: usize) -> Block {
+        Block::new(num_bands, num_channels)
     }
 
     #[test]

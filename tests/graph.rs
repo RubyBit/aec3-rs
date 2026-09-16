@@ -927,3 +927,147 @@ fn linear_pipeline_builder_is_ergonomic_and_resettable() {
         .expect("suspended capture should not fail");
     assert!(!produced, "suspended pipeline should not emit output");
 }
+
+#[test]
+fn linear_pipeline_post_filter_is_opt_in_and_attenuates_above_19_5_khz() {
+    let format = mono_format(48_000);
+    let frames = format.frames_per_channel as usize;
+    // 22 kHz is inside the post filter stopband, and completes exactly 220
+    // cycles per 10 ms frame, so the tone is phase continuous across frames.
+    let tone: Vec<f32> = (0..frames)
+        .map(|n| {
+            (2.0 * std::f32::consts::PI * 22_000.0 * n as f32 / format.sample_rate_hz as f32).sin()
+        })
+        .collect();
+    let silence = vec![0.0f32; format.sample_count()];
+
+    let run = |enable_post_filter: bool| -> f32 {
+        let mut pipeline = linear::builder(format, format)
+            // Leave only the stage under test in the path.
+            .enable_high_pass_filter(false)
+            .enable_noise_suppression(false)
+            .enable_gain_controller2(false)
+            .enable_post_filter(enable_post_filter)
+            .build()
+            .expect("pipeline should build");
+
+        assert_eq!(
+            enable_post_filter,
+            pipeline.handles().post_filter.is_some(),
+            "post filter node presence should follow the builder flag"
+        );
+
+        // Run to steady state, then measure the last frame.
+        let mut output = vec![0.0f32; format.sample_count()];
+        for _ in 0..10 {
+            pipeline
+                .handle_render_frame(&silence)
+                .expect("render should be accepted");
+            let produced = pipeline
+                .process_capture_frame(&tone, &mut output)
+                .expect("capture should be processed");
+            assert!(produced, "pipeline should emit capture output");
+        }
+
+        pipeline.reset_post_filter().expect("reset should succeed");
+
+        output
+            .iter()
+            .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
+    };
+
+    let without = run(false);
+    let with = run(true);
+
+    assert!(
+        without > 0.5,
+        "tone should survive the pipeline when the post filter is off, got {without}"
+    );
+    assert!(
+        with < 0.1,
+        "post filter should attenuate 22 kHz, got {with}"
+    );
+}
+
+#[test]
+fn aec3_node_capture_output_usage_port_reaches_the_suppressor() {
+    let format = mono_format(16_000);
+    let frames = format.frames_per_channel as usize;
+
+    let run = |capture_output_used: bool| -> Vec<f32> {
+        let mut graph = GraphBuilder::new();
+        let render = graph.source::<AudioChunk>("render");
+        let capture = graph.source::<AudioChunk>("capture");
+        let usage = graph.source::<bool>("capture_output_used");
+        let output = graph.sink::<AudioChunk>("output", QueueConfig::audio_default());
+        let node = aec3_node::builder(format, format)
+            .add_to(&mut graph)
+            .expect("node builds");
+        graph.connect(render, node.render_in).expect("render");
+        graph.connect(capture, node.capture_in).expect("capture");
+        graph
+            .connect(usage, node.capture_output_used_in)
+            .expect("usage");
+        graph.connect(node.capture_out, output).expect("output");
+
+        let mut runtime = Runtime::new(graph.build().expect("graph builds")).expect("runtime");
+        runtime
+            .push(
+                usage,
+                Packet {
+                    meta: PacketMeta::default(),
+                    payload: capture_output_used,
+                },
+            )
+            .expect("push usage");
+
+        let mut collected = Vec::new();
+        for frame_index in 0..40u64 {
+            let samples: Vec<f32> = (0..frames)
+                .map(|n| {
+                    let t = (frame_index as usize * frames + n) as f32;
+                    0.5 * (2.0 * std::f32::consts::PI * 500.0 * t / 16_000.0).sin()
+                })
+                .collect();
+            let meta = PacketMeta {
+                sequence: Some(frame_index),
+                ..PacketMeta::default()
+            };
+            // The capture carries the same signal as the render, so there is an
+            // echo for the suppressor to act on.
+            for source in [render, capture] {
+                runtime
+                    .push(
+                        source,
+                        Packet {
+                            meta: meta.clone(),
+                            payload: AudioChunk::from_interleaved(format, &samples),
+                        },
+                    )
+                    .expect("push audio");
+                runtime.run_until_stalled().expect("run");
+            }
+            while let Some(packet) = runtime.try_pull(output).expect("pull") {
+                collected.extend_from_slice(packet.payload().samples());
+            }
+        }
+        collected
+    };
+
+    let used = run(true);
+    let unused = run(false);
+
+    assert!(!used.is_empty() && used.len() == unused.len());
+    assert_ne!(
+        used, unused,
+        "capture_output_used_in should reach the suppressor"
+    );
+
+    let energy = |samples: &[f32]| samples.iter().map(|v| v * v).sum::<f32>();
+    assert!(
+        energy(&unused) > energy(&used),
+        "skipping the suppressor should leave more signal ({} vs {})",
+        energy(&unused),
+        energy(&used)
+    );
+}

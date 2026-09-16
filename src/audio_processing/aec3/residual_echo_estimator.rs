@@ -311,9 +311,8 @@ fn get_echo_path_gain(aec_state: &AecState, config: &EpStrength) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_processing::aec3::aec3_common::{
-        BLOCK_SIZE, get_time_domain_length, num_bands_for_rate,
-    };
+    use crate::audio_processing::aec3::aec3_common::{get_time_domain_length, num_bands_for_rate};
+    use crate::audio_processing::aec3::block::Block;
     use crate::audio_processing::aec3::delay_estimate::DelayEstimate;
     use crate::audio_processing::aec3::render_delay_buffer::RenderDelayBuffer;
     use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
@@ -333,7 +332,7 @@ mod tests {
 
                 let num_bands = num_bands_for_rate(SAMPLE_RATE_HZ);
                 assert!(num_bands > 0);
-                let mut x = vec![vec![vec![0.0f32; BLOCK_SIZE]; num_render_channels]; num_bands];
+                let mut x = Block::new(num_bands, num_render_channels);
 
                 let mut h2 = vec![vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; 10]; num_capture_channels];
                 for channel in &mut h2 {
@@ -367,7 +366,7 @@ mod tests {
                 s2_linear[0].fill(LEVEL);
 
                 for iteration in 0..1993 {
-                    randomize_sample_vector(&mut random_generator, &mut x[0][0]);
+                    randomize_sample_vector(&mut random_generator, x.view_mut(0, 0));
                     render_delay_buffer.insert(&x);
                     if iteration == 0 {
                         render_delay_buffer.reset();

@@ -7,6 +7,7 @@ pub mod aec3_fft;
 pub mod aec_state;
 pub mod alignment_mixer;
 pub mod api_call_jitter_metrics;
+pub mod block;
 pub mod block_buffer;
 pub mod block_delay_buffer;
 pub mod block_framer;

@@ -1,8 +1,7 @@
 use crate::api::config::EchoCanceller3Config;
 use crate::api::control::Metrics;
-use crate::audio_processing::aec3::aec3_common::{
-    BLOCK_SIZE, num_bands_for_rate, valid_full_band_rate,
-};
+use crate::audio_processing::aec3::aec3_common::{num_bands_for_rate, valid_full_band_rate};
+use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::block_processor_metrics::BlockProcessorMetrics;
 use crate::audio_processing::aec3::delay_estimate::DelayEstimate;
 use crate::audio_processing::aec3::echo_path_variability::{DelayAdjustment, EchoPathVariability};
@@ -85,14 +84,13 @@ impl BlockProcessor {
         &mut self,
         echo_path_gain_change: bool,
         capture_signal_saturation: bool,
-        linear_output: Option<&mut Vec<Vec<Vec<f32>>>>,
-        capture_block: &mut Vec<Vec<Vec<f32>>>,
+        linear_output: Option<&mut Block>,
+        capture_block: &mut Block,
     ) {
         let expected_bands = num_bands_for_rate(self.sample_rate_hz);
-        assert_eq!(expected_bands, capture_block.len());
+        assert_eq!(expected_bands, capture_block.num_bands());
         assert!(expected_bands > 0);
-        assert!(!capture_block[0].is_empty());
-        assert_eq!(BLOCK_SIZE, capture_block[0][0].len());
+        assert!(capture_block.num_channels() > 0);
 
         self.capture_call_counter += 1;
 
@@ -132,7 +130,7 @@ impl BlockProcessor {
                 self.estimated_delay = controller.get_delay(
                     self.render_buffer.downsampled_render_buffer(),
                     self.render_buffer.delay(),
-                    &capture_block[0],
+                    capture_block,
                 );
                 if let Some(delay) = self.estimated_delay {
                     let delay_changed = self.render_buffer.align_from_delay(delay.delay);
@@ -165,12 +163,11 @@ impl BlockProcessor {
     }
 
     /// Buffers a render block ahead of capture processing.
-    pub fn buffer_render(&mut self, render_block: &[Vec<Vec<f32>>]) {
+    pub fn buffer_render(&mut self, render_block: &Block) {
         let expected_bands = num_bands_for_rate(self.sample_rate_hz);
-        assert_eq!(expected_bands, render_block.len());
+        assert_eq!(expected_bands, render_block.num_bands());
         assert!(expected_bands > 0);
-        assert!(!render_block[0].is_empty());
-        assert_eq!(BLOCK_SIZE, render_block[0][0].len());
+        assert!(render_block.num_channels() > 0);
 
         self.render_event = self.render_buffer.insert(render_block);
         self.metrics
@@ -185,6 +182,12 @@ impl BlockProcessor {
     pub fn update_echo_leakage_status(&mut self, leakage_detected: bool) {
         self.echo_remover
             .update_echo_leakage_status(leakage_detected);
+    }
+
+    /// Propagates capture output usage to the echo remover.
+    pub fn set_capture_output_usage(&mut self, capture_output_used: bool) {
+        self.echo_remover
+            .set_capture_output_usage(capture_output_used);
     }
 
     /// Applies an externally supplied buffer delay hint (in milliseconds).
@@ -211,14 +214,8 @@ mod tests {
     use super::*;
     use crate::audio_processing::aec3::aec3_common::{NUM_BLOCKS_PER_SECOND, num_bands_for_rate};
 
-    fn make_block(num_bands: usize, num_channels: usize, value: f32) -> Vec<Vec<Vec<f32>>> {
-        (0..num_bands)
-            .map(|_| {
-                (0..num_channels)
-                    .map(|_| vec![value; BLOCK_SIZE])
-                    .collect::<Vec<_>>()
-            })
-            .collect()
+    fn make_block(num_bands: usize, num_channels: usize, value: f32) -> Block {
+        Block::with_value(num_bands, num_channels, value)
     }
 
     fn run_basic_setup_and_api_call_test(sample_rate_hz: i32, num_iterations: usize) {
@@ -247,15 +244,6 @@ mod tests {
     #[test]
     fn test_longer_call() {
         run_basic_setup_and_api_call_test(16_000, 20 * NUM_BLOCKS_PER_SECOND);
-    }
-
-    #[test]
-    #[should_panic]
-    fn verify_capture_block_size_check() {
-        let config = EchoCanceller3Config::default();
-        let mut processor = BlockProcessor::new(config, 16_000, 1, 1);
-        let mut block = vec![vec![vec![0.0f32; BLOCK_SIZE - 1]]];
-        processor.process_capture(false, false, None, &mut block);
     }
 
     #[test]

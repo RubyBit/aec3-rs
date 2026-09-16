@@ -17,6 +17,7 @@ pub struct EchoCanceller3Config {
     pub echo_removal_control: EchoRemovalControl,
     pub transparent_mode: TransparentModeConfig,
     pub echo_model: EchoModel,
+    pub comfort_noise: ComfortNoise,
     pub suppressor: Suppressor,
     pub multi_channel: MultiChannel,
 }
@@ -34,6 +35,7 @@ impl Default for EchoCanceller3Config {
             echo_removal_control: EchoRemovalControl::default(),
             transparent_mode: TransparentModeConfig::default(),
             echo_model: EchoModel::default(),
+            comfort_noise: ComfortNoise::default(),
             suppressor: Suppressor::default(),
             multi_channel: MultiChannel::default(),
         }
@@ -81,6 +83,7 @@ impl EchoCanceller3Config {
         res &= limit_usize(&mut c.delay.hysteresis_limit_blocks, 0, 5000);
         res &= limit_usize(&mut c.delay.fixed_capture_delay_samples, 0, 5000);
         res &= limit_f32(&mut c.delay.delay_estimate_smoothing, 0.0, 1.0);
+        res &= limit_f32(&mut c.delay.delay_estimate_smoothing_delay_found, 0.0, 1.0);
         res &= limit_f32(&mut c.delay.delay_candidate_detection_threshold, 0.0, 1.0);
         res &= limit_i32(&mut c.delay.delay_selection_thresholds.initial, 1, 250);
         res &= limit_i32(&mut c.delay.delay_selection_thresholds.converged, 1, 250);
@@ -175,6 +178,8 @@ impl EchoCanceller3Config {
         res &= limit_usize(&mut c.echo_model.render_pre_window_size, 0, 100);
         res &= limit_usize(&mut c.echo_model.render_post_window_size, 0, 100);
 
+        res &= limit_f32(&mut c.comfort_noise.noise_floor_dbfs, -200.0, 0.0);
+
         res &= limit_usize(&mut c.suppressor.nearend_average_blocks, 1, 5000);
 
         res &= limit_f32(
@@ -250,6 +255,12 @@ impl EchoCanceller3Config {
             0.0,
             100.0,
         );
+
+        res &= limit_usize(&mut c.suppressor.last_permanent_lf_smoothing_band, 0, 64);
+        res &= limit_usize(&mut c.suppressor.last_lf_smoothing_band, 0, 64);
+        res &= limit_usize(&mut c.suppressor.last_lf_band, 0, 63);
+        let first_hf_band_floor = c.suppressor.last_lf_band + 1;
+        res &= limit_usize(&mut c.suppressor.first_hf_band, first_hf_band_floor, 64);
 
         res &= limit_f32(
             &mut c.suppressor.dominant_nearend_detection.enr_threshold,
@@ -380,6 +391,8 @@ pub struct Delay {
     pub hysteresis_limit_blocks: usize,
     pub fixed_capture_delay_samples: usize,
     pub delay_estimate_smoothing: f32,
+    /// Smoothing used once the lag aggregator has found a reliable delay.
+    pub delay_estimate_smoothing_delay_found: f32,
     pub delay_candidate_detection_threshold: f32,
     pub delay_selection_thresholds: DelaySelectionThresholds,
     pub use_external_delay_estimator: bool,
@@ -398,6 +411,7 @@ impl Default for Delay {
             hysteresis_limit_blocks: 1,
             fixed_capture_delay_samples: 0,
             delay_estimate_smoothing: 0.7,
+            delay_estimate_smoothing_delay_found: 0.7,
             delay_candidate_detection_threshold: 0.2,
             delay_selection_thresholds: DelaySelectionThresholds {
                 initial: 5,
@@ -455,6 +469,9 @@ pub struct Filter {
     pub conservative_initial_phase: bool,
     pub enable_shadow_filter_output_usage: bool,
     pub use_linear_filter: bool,
+    /// High-pass filters the render reference before it reaches the linear
+    /// filter.
+    pub high_pass_filter_echo_reference: bool,
     pub export_linear_aec_output: bool,
 }
 
@@ -494,6 +511,7 @@ impl Default for Filter {
             conservative_initial_phase: false,
             enable_shadow_filter_output_usage: true,
             use_linear_filter: true,
+            high_pass_filter_echo_reference: false,
             export_linear_aec_output: false,
         }
     }
@@ -678,10 +696,33 @@ impl Default for EchoModel {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ComfortNoise {
+    pub noise_floor_dbfs: f32,
+}
+
+impl Default for ComfortNoise {
+    fn default() -> Self {
+        Self {
+            noise_floor_dbfs: -96.03406,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Suppressor {
     pub nearend_average_blocks: usize,
     pub normal_tuning: Tuning,
     pub nearend_tuning: Tuning,
+    /// Also applies the low-frequency gain smoothing during the initial phase;
+    /// outside it the smoothing always runs.
+    pub lf_smoothing_during_initial_phase: bool,
+    /// Bands up to this one are smoothed even when echo exceeds nearend.
+    pub last_permanent_lf_smoothing_band: usize,
+    pub last_lf_smoothing_band: usize,
+    /// Masking thresholds use the low-frequency set up to `last_lf_band`, the
+    /// high-frequency set from `first_hf_band`, and interpolate in between.
+    pub last_lf_band: usize,
+    pub first_hf_band: usize,
     pub dominant_nearend_detection: DominantNearendDetection,
     pub subband_nearend_detection: SubbandNearendDetection,
     pub use_subband_nearend_detection: bool,
@@ -712,6 +753,11 @@ impl Default for Suppressor {
                 2.0,
                 0.25,
             ),
+            lf_smoothing_during_initial_phase: true,
+            last_permanent_lf_smoothing_band: 0,
+            last_lf_smoothing_band: 5,
+            last_lf_band: 5,
+            first_hf_band: 8,
             dominant_nearend_detection: DominantNearendDetection {
                 enr_threshold: 0.25,
                 enr_exit_threshold: 10.0,
@@ -893,4 +939,59 @@ fn limit_i32(value: &mut i32, min_value: i32, max_value: i32) -> bool {
     let unchanged = *value == clamped;
     *value = clamped;
     unchanged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_the_reference() {
+        let config = EchoCanceller3Config::default();
+
+        assert_eq!(0.7, config.delay.delay_estimate_smoothing_delay_found);
+        assert!(!config.filter.high_pass_filter_echo_reference);
+        assert_eq!(-96.03406, config.comfort_noise.noise_floor_dbfs);
+        assert!(config.suppressor.lf_smoothing_during_initial_phase);
+        assert_eq!(0, config.suppressor.last_permanent_lf_smoothing_band);
+        assert_eq!(5, config.suppressor.last_lf_smoothing_band);
+        assert_eq!(5, config.suppressor.last_lf_band);
+        assert_eq!(8, config.suppressor.first_hf_band);
+    }
+
+    #[test]
+    fn validate_accepts_the_default_config() {
+        let mut config = EchoCanceller3Config::default();
+        assert!(config.validate());
+        assert_eq!(EchoCanceller3Config::default(), config);
+    }
+
+    #[test]
+    fn validate_clamps_the_new_fields() {
+        let mut config = EchoCanceller3Config::default();
+        config.delay.delay_estimate_smoothing_delay_found = 2.0;
+        config.comfort_noise.noise_floor_dbfs = 10.0;
+        config.suppressor.last_permanent_lf_smoothing_band = 100;
+        config.suppressor.last_lf_smoothing_band = 100;
+        config.suppressor.last_lf_band = 100;
+
+        assert!(!config.validate());
+
+        assert_eq!(1.0, config.delay.delay_estimate_smoothing_delay_found);
+        assert_eq!(0.0, config.comfort_noise.noise_floor_dbfs);
+        assert_eq!(64, config.suppressor.last_permanent_lf_smoothing_band);
+        assert_eq!(64, config.suppressor.last_lf_smoothing_band);
+        assert_eq!(63, config.suppressor.last_lf_band);
+    }
+
+    #[test]
+    fn validate_keeps_first_hf_band_above_last_lf_band() {
+        let mut config = EchoCanceller3Config::default();
+        config.suppressor.last_lf_band = 20;
+        config.suppressor.first_hf_band = 4;
+
+        assert!(!config.validate());
+        assert_eq!(20, config.suppressor.last_lf_band);
+        assert_eq!(21, config.suppressor.first_hf_band);
+    }
 }

@@ -88,6 +88,7 @@ fn generate_comfort_noise(
 pub struct ComfortNoiseGenerator {
     optimization: Aec3Optimization,
     seed: u32,
+    noise_floor: f32,
     num_capture_channels: usize,
     n2_initial: Option<Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>>,
     y2_smoothed: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
@@ -96,7 +97,18 @@ pub struct ComfortNoiseGenerator {
 }
 
 impl ComfortNoiseGenerator {
-    pub fn new(optimization: Aec3Optimization, num_capture_channels: usize) -> Self {
+    /// Noise floor value matching a WGN input of `noise_floor_dbfs`.
+    fn noise_floor_factor(noise_floor_dbfs: f32) -> f32 {
+        // dbfs_normalization = 20 * log10(32768).
+        const DBFS_NORMALIZATION: f32 = 90.308_998_699_194_36;
+        64.0 * 10.0f32.powf((DBFS_NORMALIZATION + noise_floor_dbfs) * 0.1)
+    }
+
+    pub fn new(
+        optimization: Aec3Optimization,
+        noise_floor_dbfs: f32,
+        num_capture_channels: usize,
+    ) -> Self {
         assert!(num_capture_channels > 0);
         let mut n2_initial = Vec::with_capacity(num_capture_channels);
         for _ in 0..num_capture_channels {
@@ -107,6 +119,7 @@ impl ComfortNoiseGenerator {
         let instance = Self {
             optimization,
             seed: 42,
+            noise_floor: Self::noise_floor_factor(noise_floor_dbfs),
             num_capture_channels,
             n2_initial: Some(n2_initial),
             y2_smoothed,
@@ -167,14 +180,14 @@ impl ComfortNoiseGenerator {
             }
 
             // Limit the noise floor
-            const K_NOISE_FLOOR: f32 = 17.1267f32;
+            let noise_floor = self.noise_floor;
             for ch in 0..self.num_capture_channels {
                 for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
-                    self.n2[ch][k] = self.n2[ch][k].max(K_NOISE_FLOOR);
+                    self.n2[ch][k] = self.n2[ch][k].max(noise_floor);
                 }
                 if let Some(initial) = &mut self.n2_initial {
                     for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
-                        initial[ch][k] = initial[ch][k].max(K_NOISE_FLOOR);
+                        initial[ch][k] = initial[ch][k].max(noise_floor);
                     }
                 }
             }
@@ -222,7 +235,13 @@ mod tests {
     #[test]
     fn correct_level() {
         const NUM_CHANNELS: usize = 5;
-        let mut cng = ComfortNoiseGenerator::new(detect_optimization(), NUM_CHANNELS);
+        let mut cng = ComfortNoiseGenerator::new(
+            detect_optimization(),
+            EchoCanceller3Config::default()
+                .comfort_noise
+                .noise_floor_dbfs,
+            NUM_CHANNELS,
+        );
         let _aec_state = AecState::new(EchoCanceller3Config::default(), NUM_CHANNELS);
 
         let mut n2 = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; NUM_CHANNELS];

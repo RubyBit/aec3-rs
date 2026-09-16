@@ -26,6 +26,7 @@ pub struct Aec3Node {
     pub render_in: crate::graph::InPort<AudioChunk>,
     pub capture_in: crate::graph::InPort<AudioChunk>,
     pub delay_in: crate::graph::InPort<i32>,
+    pub capture_output_used_in: crate::graph::InPort<bool>,
     pub capture_out: OutPort<AudioChunk>,
     pub linear_out: Option<OutPort<AudioChunk>>,
     pub metrics_out: Option<OutPort<Aec3Metrics>>,
@@ -152,6 +153,15 @@ impl NodeSpec for Aec3NodeBuilder {
                 ..InputOptions::default()
             },
         );
+        let capture_output_used_in = graph.register_input::<bool>(
+            node,
+            "capture_output_used_in",
+            InputOptions {
+                queue: QueueConfig::latest(1),
+                access: AccessMode::PeekLatest,
+                ..InputOptions::default()
+            },
+        );
         let capture_out = graph.register_output::<AudioChunk>(
             node,
             "capture_out",
@@ -196,6 +206,7 @@ impl NodeSpec for Aec3NodeBuilder {
                 render_in,
                 capture_in,
                 delay_in,
+                capture_output_used_in,
                 capture_out,
                 linear_out,
                 metrics_out,
@@ -208,6 +219,7 @@ impl NodeSpec for Aec3NodeBuilder {
             render_in,
             capture_in,
             delay_in,
+            capture_output_used_in,
             capture_out,
             linear_out,
             metrics_out,
@@ -228,6 +240,7 @@ struct Aec3Factory {
     render_in: crate::graph::InPort<AudioChunk>,
     capture_in: crate::graph::InPort<AudioChunk>,
     delay_in: crate::graph::InPort<i32>,
+    capture_output_used_in: crate::graph::InPort<bool>,
     capture_out: OutPort<AudioChunk>,
     linear_out: Option<OutPort<AudioChunk>>,
     metrics_out: Option<OutPort<Aec3Metrics>>,
@@ -283,9 +296,11 @@ impl NodeFactory for Aec3Factory {
             capture_channels: self.capture_format.channels as usize,
             diagnostics_enabled: self.diagnostics_enabled,
             last_delay_ms: self.initial_delay_ms,
+            last_capture_output_used: None,
             render_in: self.render_in,
             capture_in: self.capture_in,
             delay_in: self.delay_in,
+            capture_output_used_in: self.capture_output_used_in,
             capture_out: self.capture_out,
             linear_out: self.linear_out,
             metrics_out: self.metrics_out,
@@ -309,9 +324,11 @@ struct Aec3Runner {
     capture_channels: usize,
     diagnostics_enabled: bool,
     last_delay_ms: Option<i32>,
+    last_capture_output_used: Option<bool>,
     render_in: crate::graph::InPort<AudioChunk>,
     capture_in: crate::graph::InPort<AudioChunk>,
     delay_in: crate::graph::InPort<i32>,
+    capture_output_used_in: crate::graph::InPort<bool>,
     capture_out: OutPort<AudioChunk>,
     linear_out: Option<OutPort<AudioChunk>>,
     metrics_out: Option<OutPort<Aec3Metrics>>,
@@ -369,6 +386,18 @@ impl Aec3Runner {
         Ok(())
     }
 
+    fn apply_capture_output_usage(&mut self, ctx: &mut ProcessCtx<'_>) -> GraphResult<()> {
+        let Some(packet) = ctx.peek(self.capture_output_used_in)? else {
+            return Ok(());
+        };
+        let capture_output_used = *packet.payload();
+        if self.last_capture_output_used != Some(capture_output_used) {
+            self.echo.set_capture_output_usage(capture_output_used);
+            self.last_capture_output_used = Some(capture_output_used);
+        }
+        Ok(())
+    }
+
     fn apply_delay_control(&mut self, ctx: &mut ProcessCtx<'_>) -> GraphResult<()> {
         let Some(delay_packet) = ctx.peek(self.delay_in)? else {
             return Ok(());
@@ -399,6 +428,7 @@ impl NodeRunner for Aec3Runner {
 
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> GraphResult<()> {
         self.apply_delay_control(ctx)?;
+        self.apply_capture_output_usage(ctx)?;
 
         match ctx.control_state() {
             NodeControlState::Active => {}

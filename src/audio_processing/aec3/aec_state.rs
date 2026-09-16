@@ -248,13 +248,13 @@ impl AecState {
         }
 
         let min_delay = self.delay_state.min_direct_path_filter_delay();
-        let aligned_render_block = &render_buffer.block(-(min_delay as isize))[0];
+        let aligned_render_block = render_buffer.block(-(min_delay as isize));
 
         let limit = self.config.render_levels.active_render_limit
             * self.config.render_levels.active_render_limit
             * FFT_LENGTH_BY_2 as f32;
         let mut active_render = false;
-        for channel in aligned_render_block {
+        for channel in aligned_render_block.band_channels(0) {
             let energy: f32 = channel.iter().map(|sample| sample * sample).sum();
             if energy > limit {
                 active_render = true;
@@ -471,6 +471,7 @@ mod tests {
     use crate::audio_processing::aec3::aec3_common::{
         BLOCK_SIZE, get_time_domain_length, num_bands_for_rate,
     };
+    use crate::audio_processing::aec3::block::Block;
     use crate::audio_processing::aec3::delay_estimate::{DelayEstimate, DelayEstimateQuality};
     use crate::audio_processing::aec3::echo_path_variability::EchoPathVariability;
     use crate::audio_processing::aec3::render_delay_buffer::RenderDelayBuffer;
@@ -485,7 +486,7 @@ mod tests {
             RenderDelayBuffer::new(config.clone(), SAMPLE_RATE_HZ, num_render_channels);
 
         let num_bands = num_bands_for_rate(SAMPLE_RATE_HZ);
-        let mut x = vec![vec![vec![0.0f32; BLOCK_SIZE]; num_render_channels]; num_bands];
+        let mut x = Block::new(num_bands, num_render_channels);
         let mut y = vec![[0.0f32; BLOCK_SIZE]; num_capture_channels];
         let mut subtractor_output = vec![SubtractorOutput::new(); num_capture_channels];
         let mut e2_main = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels];
@@ -509,11 +510,7 @@ mod tests {
         filter_frequency_response[0][2].fill(100.0);
         filter_frequency_response[0][2][0] = 1.0;
 
-        for band in &mut x {
-            for channel in band {
-                channel.fill(101.0);
-            }
-        }
+        x.fill(101.0);
 
         for _ in 0..3000 {
             render_delay_buffer.insert(&x);
@@ -555,7 +552,7 @@ mod tests {
         assert!(!state.usable_linear_estimate());
 
         for ch in 0..num_render_channels {
-            x[0][ch].fill(101.0);
+            x.view_mut(0, ch).fill(101.0);
         }
         render_delay_buffer.insert(&x);
         render_delay_buffer.prepare_capture_processing();
@@ -598,13 +595,9 @@ mod tests {
         }
         assert!(state.active_render());
 
-        for band in &mut x {
-            for channel in band {
-                channel.fill(0.0);
-            }
-        }
+        x.fill(0.0);
         for ch in 0..num_render_channels {
-            x[0][ch][0] = 5000.0;
+            x.view_mut(0, ch)[0] = 5000.0;
         }
 
         let fft_buffer_len = {

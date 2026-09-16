@@ -1,4 +1,5 @@
 use crate::api::config::AlignmentMixing;
+use crate::audio_processing::aec3::block::Block;
 
 use super::aec3_common::{BLOCK_SIZE, NUM_BLOCKS_PER_SECOND};
 
@@ -57,24 +58,21 @@ impl AlignmentMixer {
         }
     }
 
-    pub fn produce_output(&mut self, x: &[Vec<f32>], y: &mut [f32; BLOCK_SIZE]) {
-        assert_eq!(x.len(), self.num_channels);
-        for channel in x {
-            assert_eq!(channel.len(), BLOCK_SIZE);
-        }
+    pub fn produce_output(&mut self, x: &Block, y: &mut [f32; BLOCK_SIZE]) {
+        assert_eq!(x.num_channels(), self.num_channels);
         match self.selection_variant {
             MixingVariant::Downmix => self.downmix(x, y),
             MixingVariant::Adaptive => {
                 let ch = self.select_channel(x);
-                y.copy_from_slice(&x[ch]);
+                y.copy_from_slice(x.view(0, ch));
             }
-            MixingVariant::Fixed => y.copy_from_slice(&x[0]),
+            MixingVariant::Fixed => y.copy_from_slice(x.view(0, 0)),
         }
     }
 
-    fn downmix(&self, x: &[Vec<f32>], y: &mut [f32; BLOCK_SIZE]) {
+    fn downmix(&self, x: &Block, y: &mut [f32; BLOCK_SIZE]) {
         y.fill(0.0);
-        for channel in x {
+        for channel in x.band_channels(0) {
             for (dst, &sample) in y.iter_mut().zip(channel.iter()) {
                 *dst += sample;
             }
@@ -84,7 +82,7 @@ impl AlignmentMixer {
         }
     }
 
-    fn select_channel(&mut self, x: &[Vec<f32>]) -> usize {
+    fn select_channel(&mut self, x: &Block) -> usize {
         let blocks_to_choose = (0.5 * NUM_BLOCKS_PER_SECOND as f32) as usize;
         let good_signal_in_lr = self.prefer_first_two_channels
             && (self.strong_block_counters[0] > blocks_to_choose
@@ -99,7 +97,7 @@ impl AlignmentMixer {
         self.block_counter += 1;
 
         for ch in 0..num_channels_to_analyze {
-            let x2_sum: f32 = x[ch].iter().map(|sample| sample * sample).sum();
+            let x2_sum: f32 = x.view(0, ch).iter().map(|sample| sample * sample).sum();
             if ch < 2 && x2_sum > self.excitation_energy_threshold {
                 self.strong_block_counters[ch] += 1;
             }
@@ -153,10 +151,10 @@ mod tests {
     fn single_channel_is_passthrough() {
         let config = default_config();
         let mut mixer = AlignmentMixer::new(1, config);
-        let input = vec![vec![1.0f32; BLOCK_SIZE]];
+        let input = Block::with_value(1, 1, 1.0);
         let mut output = [0.0f32; BLOCK_SIZE];
         mixer.produce_output(&input, &mut output);
-        for (a, b) in input[0].iter().zip(output.iter()) {
+        for (a, b) in input.view(0, 0).iter().zip(output.iter()) {
             assert!((a - b).abs() < 1e-6);
         }
     }
@@ -173,7 +171,7 @@ mod tests {
             ch0[i] = i as f32;
             ch1[i] = (BLOCK_SIZE - i) as f32;
         }
-        let input = vec![ch0.clone(), ch1.clone()];
+        let input = Block::from_nested(&[vec![ch0.clone(), ch1.clone()]]);
         let mut output = [0.0f32; BLOCK_SIZE];
         mixer.produce_output(&input, &mut output);
         for i in 0..BLOCK_SIZE {
@@ -190,7 +188,7 @@ mod tests {
         let weak = vec![0.1f32; BLOCK_SIZE];
         let mut output = [0.0f32; BLOCK_SIZE];
         for _ in 0..(NUM_BLOCKS_PER_SECOND * 2) {
-            let blocks = vec![strong.clone(), weak.clone()];
+            let blocks = Block::from_nested(&[vec![strong.clone(), weak.clone()]]);
             mixer.produce_output(&blocks, &mut output);
         }
         for (out, expected) in output.iter().zip(strong.iter()) {

@@ -421,6 +421,7 @@ impl SignalDependentErleEstimator {
 mod tests {
     use super::*;
     use crate::audio_processing::aec3::aec3_common::num_bands_for_rate;
+    use crate::audio_processing::aec3::block::Block;
     use crate::audio_processing::aec3::render_delay_buffer::RenderDelayBuffer;
 
     const SAMPLE_RATE_HZ: i32 = 16_000;
@@ -441,7 +442,7 @@ mod tests {
         y2: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
         e2: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
         h2: Vec<Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>>,
-        x: Vec<Vec<Vec<f32>>>,
+        x: Block,
         converged_filters: Vec<bool>,
         toggle: i32,
     }
@@ -463,7 +464,7 @@ mod tests {
                 block.fill(1.0);
             }
             let num_bands = num_bands_for_rate(SAMPLE_RATE_HZ) as usize;
-            let x = vec![vec![vec![0.0f32; BLOCK_SIZE]; num_render_channels]; num_bands];
+            let x = Block::new(num_bands, num_render_channels);
             Self {
                 render_delay_buffer,
                 x2: [0.0; FFT_LENGTH_BY_2_PLUS_1],
@@ -478,15 +479,13 @@ mod tests {
 
         fn update(&mut self) {
             if self.toggle % 2 == 0 {
-                for band in &mut self.x {
-                    for channel in band {
-                        channel.fill(0.0);
-                    }
-                }
+                self.x.fill(0.0);
             } else {
-                for band in &mut self.x {
-                    for channel in band {
-                        channel.copy_from_slice(&ACTIVE_FRAME);
+                for band in 0..self.x.num_bands() {
+                    for channel in 0..self.x.num_channels() {
+                        self.x
+                            .view_mut(band, channel)
+                            .copy_from_slice(&ACTIVE_FRAME);
                     }
                 }
             }

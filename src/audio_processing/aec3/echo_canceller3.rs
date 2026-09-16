@@ -5,10 +5,11 @@ use crate::api::{
     control::{EchoControl, Metrics},
 };
 use crate::audio_processing::aec3::aec3_common::{
-    BLOCK_SIZE, MAX_NUM_BANDS, RENDER_TRANSFER_QUEUE_SIZE_FRAMES, SUB_FRAME_LENGTH,
-    num_bands_for_rate, valid_full_band_rate,
+    MAX_NUM_BANDS, RENDER_TRANSFER_QUEUE_SIZE_FRAMES, SUB_FRAME_LENGTH, num_bands_for_rate,
+    valid_full_band_rate,
 };
 use crate::audio_processing::aec3::api_call_jitter_metrics::ApiCallJitterMetrics;
+use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::block_delay_buffer::BlockDelayBuffer;
 use crate::audio_processing::aec3::block_framer::BlockFramer;
 use crate::audio_processing::aec3::block_processor::BlockProcessor;
@@ -23,33 +24,39 @@ const LINEAR_OUTPUT_BANDS: usize = 1;
 const SUB_FRAMES_PER_FRAME: usize = AudioBuffer::SPLIT_BAND_SIZE / SUB_FRAME_LENGTH;
 
 type Tensor3 = Vec<Vec<Vec<f32>>>;
-type Tensor2 = Vec<Vec<f32>>;
 
 trait BlockProcessorBackend {
     fn process_capture(
         &mut self,
         level_change: bool,
         saturated_microphone_signal: bool,
-        linear_output: Option<&mut Tensor3>,
-        capture_block: &mut Tensor3,
+        linear_output: Option<&mut Block>,
+        capture_block: &mut Block,
     );
 
-    fn buffer_render(&mut self, render_block: &[Tensor2]);
+    fn buffer_render(&mut self, render_block: &Block);
 
     fn update_echo_leakage_status(&mut self, leakage_detected: bool);
 
     fn set_audio_buffer_delay(&mut self, delay_ms: i32);
 
+    /// Test doubles keep the default no-op.
+    fn set_capture_output_usage(&mut self, _capture_output_used: bool) {}
+
     fn metrics(&self) -> Metrics;
 }
 
 impl BlockProcessorBackend for BlockProcessor {
+    fn set_capture_output_usage(&mut self, capture_output_used: bool) {
+        BlockProcessor::set_capture_output_usage(self, capture_output_used);
+    }
+
     fn process_capture(
         &mut self,
         level_change: bool,
         saturated_microphone_signal: bool,
-        linear_output: Option<&mut Tensor3>,
-        capture_block: &mut Tensor3,
+        linear_output: Option<&mut Block>,
+        capture_block: &mut Block,
     ) {
         BlockProcessor::process_capture(
             self,
@@ -60,7 +67,7 @@ impl BlockProcessorBackend for BlockProcessor {
         );
     }
 
-    fn buffer_render(&mut self, render_block: &[Tensor2]) {
+    fn buffer_render(&mut self, render_block: &Block) {
         BlockProcessor::buffer_render(self, render_block);
     }
 
@@ -107,13 +114,20 @@ struct RenderWriter {
     data_dumper: ApmDataDumper,
     num_bands: usize,
     num_channels: usize,
-    high_pass_filter: HighPassFilter,
+    /// Only present when `filter.high_pass_filter_echo_reference` is set.
+    high_pass_filter: Option<HighPassFilter>,
     render_queue_input_frame: Tensor3,
 }
 
 impl RenderWriter {
-    fn new(data_dumper: ApmDataDumper, num_bands: usize, num_channels: usize) -> Self {
-        let high_pass_filter = HighPassFilter::new(16_000, num_channels);
+    fn new(
+        data_dumper: ApmDataDumper,
+        high_pass_filter_echo_reference: bool,
+        num_bands: usize,
+        num_channels: usize,
+    ) -> Self {
+        let high_pass_filter =
+            high_pass_filter_echo_reference.then(|| HighPassFilter::new(16_000, num_channels));
         let render_queue_input_frame =
             allocate_tensor(num_bands, num_channels, AudioBuffer::SPLIT_BAND_SIZE);
         Self {
@@ -140,8 +154,9 @@ impl RenderWriter {
         );
 
         copy_buffer_into_frame(input, &mut self.render_queue_input_frame);
-        self.high_pass_filter
-            .process(&mut self.render_queue_input_frame[0]);
+        if let Some(high_pass_filter) = self.high_pass_filter.as_mut() {
+            high_pass_filter.process(&mut self.render_queue_input_frame[0]);
+        }
 
         let _ = queue.insert(self.render_queue_input_frame.clone());
     }
@@ -169,9 +184,9 @@ pub struct EchoCanceller3 {
     linear_output_framer: Option<BlockFramer>,
     block_processor: Box<dyn BlockProcessorBackend>,
     render_queue_output_frame: Tensor3,
-    render_block: Tensor3,
-    capture_block: Tensor3,
-    linear_output_block: Option<Tensor3>,
+    render_block: Block,
+    capture_block: Block,
+    linear_output_block: Option<Block>,
     render_sub_frame: Tensor3,
     capture_sub_frame: Tensor3,
     linear_output_sub_frame: Option<Tensor3>,
@@ -217,21 +232,30 @@ impl EchoCanceller3 {
         let config = adjust_config(config);
         let multichannel_config = multichannel_config.map(adjust_config);
 
-        let config_selector =
-            ConfigSelector::new(config, multichannel_config, num_render_channels);
+        let config_selector = ConfigSelector::new(config, multichannel_config, num_render_channels);
         let multichannel_content_detector = {
             let active = config_selector.active_config();
             MultiChannelContentDetector::new(
                 active.multi_channel.detect_stereo_content,
                 num_render_channels,
                 active.multi_channel.stereo_detection_threshold,
-                active.multi_channel.stereo_detection_timeout_threshold_seconds,
+                active
+                    .multi_channel
+                    .stereo_detection_timeout_threshold_seconds,
                 active.multi_channel.stereo_detection_hysteresis_seconds,
             )
         };
 
         let data_dumper = ApmDataDumper::new_unique();
-        let render_writer = RenderWriter::new(data_dumper.clone(), num_bands, num_render_channels);
+        let render_writer = RenderWriter::new(
+            data_dumper.clone(),
+            config_selector
+                .active_config()
+                .filter
+                .high_pass_filter_echo_reference,
+            num_bands,
+            num_render_channels,
+        );
         let render_transfer_queue = SwapQueue::new(RENDER_TRANSFER_QUEUE_SIZE_FRAMES);
         let capture_blocker = FrameBlocker::new(num_bands, num_capture_channels);
         let output_framer = BlockFramer::new(num_bands, num_capture_channels);
@@ -242,14 +266,14 @@ impl EchoCanceller3 {
             .export_linear_aec_output;
         let linear_output_framer = export_linear_output
             .then(|| BlockFramer::new(LINEAR_OUTPUT_BANDS, num_capture_channels));
-        let linear_output_block = export_linear_output
-            .then(|| allocate_tensor(LINEAR_OUTPUT_BANDS, num_capture_channels, BLOCK_SIZE));
+        let linear_output_block =
+            export_linear_output.then(|| Block::new(LINEAR_OUTPUT_BANDS, num_capture_channels));
         let linear_output_sub_frame = export_linear_output
             .then(|| allocate_tensor(LINEAR_OUTPUT_BANDS, num_capture_channels, SUB_FRAME_LENGTH));
 
         let render_queue_output_frame =
             allocate_tensor(num_bands, num_render_channels, AudioBuffer::SPLIT_BAND_SIZE);
-        let capture_block = allocate_tensor(num_bands, num_capture_channels, BLOCK_SIZE);
+        let capture_block = Block::new(num_bands, num_capture_channels);
         let capture_sub_frame = allocate_tensor(num_bands, num_capture_channels, SUB_FRAME_LENGTH);
 
         let block_delay_buffer = BlockDelayBuffer::new(
@@ -265,15 +289,14 @@ impl EchoCanceller3 {
         // `ConfigSelector` was constructed with this same detection state, so
         // this matches what `initialize` computes; it is inlined here only to
         // avoid building a block processor that would be immediately replaced.
-        let num_render_channels_to_aec = if multichannel_content_detector
-            .is_proper_multi_channel_content_detected()
-        {
-            num_render_channels
-        } else {
-            1
-        };
+        let num_render_channels_to_aec =
+            if multichannel_content_detector.is_proper_multi_channel_content_detected() {
+                num_render_channels
+            } else {
+                1
+            };
         let render_blocker = FrameBlocker::new(num_bands, num_render_channels_to_aec);
-        let render_block = allocate_tensor(num_bands, num_render_channels_to_aec, BLOCK_SIZE);
+        let render_block = Block::new(num_bands, num_render_channels_to_aec);
         let render_sub_frame =
             allocate_tensor(num_bands, num_render_channels_to_aec, SUB_FRAME_LENGTH);
         let block_processor: Box<dyn BlockProcessorBackend> = Box::new(BlockProcessor::new(
@@ -352,11 +375,7 @@ impl EchoCanceller3 {
 
         self.config_selector.update(multichannel_content_detected);
 
-        self.render_block = allocate_tensor(
-            self.num_bands,
-            self.num_render_channels_to_aec,
-            BLOCK_SIZE,
-        );
+        self.render_block = Block::new(self.num_bands, self.num_render_channels_to_aec);
         self.render_sub_frame = allocate_tensor(
             self.num_bands,
             self.num_render_channels_to_aec,
@@ -375,6 +394,14 @@ impl EchoCanceller3 {
     pub fn update_echo_leakage_status(&mut self, leakage_detected: bool) {
         self.block_processor
             .update_echo_leakage_status(leakage_detected);
+    }
+
+    /// Specifies whether the capture output will be used, so that processing
+    /// that only affects that output can be skipped, for instance when the
+    /// endpoint is muted. The linear filter keeps adapting either way.
+    pub fn set_capture_output_usage(&mut self, capture_output_used: bool) {
+        self.block_processor
+            .set_capture_output_usage(capture_output_used);
     }
 
     /// Enables or disables diagnostic dumping globally.
@@ -694,6 +721,10 @@ impl EchoControl for EchoCanceller3 {
         self.block_processor.set_audio_buffer_delay(delay_ms);
     }
 
+    fn set_capture_output_usage(&mut self, capture_output_used: bool) {
+        EchoCanceller3::set_capture_output_usage(self, capture_output_used);
+    }
+
     fn active_processing(&self) -> bool {
         true
     }
@@ -806,11 +837,13 @@ fn fill_tensor_sub_frame(
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioBuffer, BLOCK_SIZE, BlockProcessorBackend, EchoCanceller3, HighPassFilter, Metrics,
-        RENDER_TRANSFER_QUEUE_SIZE_FRAMES, Tensor2, Tensor3, num_bands_for_rate,
+        AudioBuffer, BlockProcessorBackend, EchoCanceller3, HighPassFilter, Metrics,
+        RENDER_TRANSFER_QUEUE_SIZE_FRAMES, Tensor3, num_bands_for_rate,
     };
     use crate::api::config::EchoCanceller3Config;
     use crate::api::control::EchoControl;
+    use crate::audio_processing::aec3::aec3_common::BLOCK_SIZE;
+    use crate::audio_processing::aec3::block::Block;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::rc::Rc;
@@ -961,9 +994,14 @@ mod tests {
             }
         }
 
-        fn run_render_transport_verification_test(&mut self) {
+        fn run_render_transport_verification_test(
+            &mut self,
+            high_pass_filter_echo_reference: bool,
+        ) {
+            let mut config = EchoCanceller3Config::default();
+            config.filter.high_pass_filter_echo_reference = high_pass_filter_echo_reference;
             let mut aec3 = EchoCanceller3::with_block_processor(
-                EchoCanceller3Config::default(),
+                config,
                 self.sample_rate_hz,
                 1,
                 1,
@@ -983,8 +1021,10 @@ mod tests {
                 self.append_capture_samples(&mut capture_output);
             }
 
-            let mut hp_filter = HighPassFilter::new(16_000, 1);
-            hp_filter.process(&mut render_input);
+            if high_pass_filter_echo_reference {
+                let mut hp_filter = HighPassFilter::new(16_000, 1);
+                hp_filter.process(&mut render_input);
+            }
             assert!(verify_sequence(&render_input[0], &capture_output, -64));
         }
 
@@ -1181,8 +1221,6 @@ mod tests {
                 self.append_capture_samples(&mut capture_output);
             }
 
-            let mut hp_filter = HighPassFilter::new(16_000, 1);
-            hp_filter.process(&mut render_input);
             assert!(verify_sequence(&render_input[0], &capture_output, -64));
         }
 
@@ -1209,12 +1247,12 @@ mod tests {
             &mut self,
             _level_change: bool,
             _saturated_microphone_signal: bool,
-            _linear_output: Option<&mut Tensor3>,
-            _capture_block: &mut Tensor3,
+            _linear_output: Option<&mut Block>,
+            _capture_block: &mut Block,
         ) {
         }
 
-        fn buffer_render(&mut self, _render_block: &[Tensor2]) {}
+        fn buffer_render(&mut self, _render_block: &Block) {}
 
         fn update_echo_leakage_status(&mut self, _leakage_detected: bool) {}
 
@@ -1226,7 +1264,7 @@ mod tests {
     }
 
     struct RenderTransportVerificationProcessor {
-        render_blocks: VecDeque<Tensor3>,
+        render_blocks: VecDeque<Block>,
     }
 
     impl RenderTransportVerificationProcessor {
@@ -1242,16 +1280,16 @@ mod tests {
             &mut self,
             _level_change: bool,
             _saturated_microphone_signal: bool,
-            _linear_output: Option<&mut Tensor3>,
-            capture_block: &mut Tensor3,
+            _linear_output: Option<&mut Block>,
+            capture_block: &mut Block,
         ) {
             if let Some(block) = self.render_blocks.pop_front() {
-                block_copy(&block, capture_block);
+                *capture_block = block;
             }
         }
 
-        fn buffer_render(&mut self, render_block: &[Tensor2]) {
-            self.render_blocks.push_back(block_clone(render_block));
+        fn buffer_render(&mut self, render_block: &Block) {
+            self.render_blocks.push_back(render_block.clone());
         }
 
         fn update_echo_leakage_status(&mut self, _leakage_detected: bool) {}
@@ -1291,8 +1329,8 @@ mod tests {
             &mut self,
             level_change: bool,
             saturated_microphone_signal: bool,
-            _linear_output: Option<&mut Tensor3>,
-            _capture_block: &mut Tensor3,
+            _linear_output: Option<&mut Block>,
+            _capture_block: &mut Block,
         ) {
             self.shared
                 .borrow_mut()
@@ -1300,7 +1338,7 @@ mod tests {
                 .push((level_change, saturated_microphone_signal));
         }
 
-        fn buffer_render(&mut self, _render_block: &[Tensor2]) {
+        fn buffer_render(&mut self, _render_block: &Block) {
             self.shared.borrow_mut().render_call_count += 1;
         }
 
@@ -1315,25 +1353,6 @@ mod tests {
 
         fn metrics(&self) -> Metrics {
             Metrics::default()
-        }
-    }
-
-    fn block_clone(block: &[Tensor2]) -> Tensor3 {
-        block
-            .iter()
-            .map(|band| {
-                band.iter()
-                    .map(|channel| channel.clone())
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>()
-    }
-
-    fn block_copy(src: &[Tensor2], dst: &mut Tensor3) {
-        for (dst_band, src_band) in dst.iter_mut().zip(src.iter()) {
-            for (dst_channel, src_channel) in dst_band.iter_mut().zip(src_band.iter()) {
-                dst_channel.copy_from_slice(src_channel);
-            }
         }
     }
 
@@ -1398,7 +1417,18 @@ mod tests {
     #[test]
     fn render_bitexactness() {
         for &rate in &[16_000, 32_000, 48_000] {
-            EchoCanceller3Tester::new(rate).run_render_transport_verification_test();
+            EchoCanceller3Tester::new(rate).run_render_transport_verification_test(
+                /*high_pass_filter_echo_reference=*/ false,
+            );
+        }
+    }
+
+    #[test]
+    fn render_bitexactness_with_high_pass_filtered_echo_reference() {
+        for &rate in &[16_000, 32_000, 48_000] {
+            EchoCanceller3Tester::new(rate).run_render_transport_verification_test(
+                /*high_pass_filter_echo_reference=*/ true,
+            );
         }
     }
 

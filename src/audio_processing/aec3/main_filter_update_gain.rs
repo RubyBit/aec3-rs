@@ -188,6 +188,7 @@ mod tests {
         detect_optimization, get_time_domain_length, num_bands_for_rate,
     };
     use crate::audio_processing::aec3::aec3_fft::{Aec3Fft, Window};
+    use crate::audio_processing::aec3::block::Block;
     use crate::audio_processing::aec3::delay_estimate::DelayEstimate;
     use crate::audio_processing::aec3::echo_path_variability::{
         DelayAdjustment, EchoPathVariability,
@@ -206,32 +207,20 @@ mod tests {
         g_last_block: FftData,
     }
 
-    fn make_render_block(num_bands: usize, num_channels: usize) -> Vec<Vec<Vec<f32>>> {
-        (0..num_bands)
-            .map(|_| {
-                (0..num_channels)
-                    .map(|_| vec![0.0f32; BLOCK_SIZE])
-                    .collect::<Vec<_>>()
-            })
-            .collect()
+    fn make_render_block(num_bands: usize, num_channels: usize) -> Block {
+        Block::new(num_bands, num_channels)
     }
 
-    fn randomize_block(rng: &mut Random, block: &mut Vec<Vec<Vec<f32>>>) {
-        for band in block.iter_mut() {
-            for channel in band.iter_mut() {
-                randomize_sample_vector(rng, channel);
+    fn randomize_block(rng: &mut Random, block: &mut Block) {
+        for band in 0..block.num_bands() {
+            for channel in 0..block.num_channels() {
+                randomize_sample_vector(rng, block.view_mut(band, channel));
             }
         }
     }
 
-    fn zero_block(block: &mut Vec<Vec<Vec<f32>>>) {
-        for band in block.iter_mut() {
-            for channel in band.iter_mut() {
-                for sample in channel.iter_mut() {
-                    *sample = 0.0;
-                }
-            }
-        }
+    fn zero_block(block: &mut Block) {
+        block.fill(0.0);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -328,7 +317,8 @@ mod tests {
                 randomize_block(&mut rng, &mut x);
             }
 
-            delay_buffer.delay(&x[0][0], &mut y);
+            let source = *x.view(0, 0);
+            delay_buffer.delay(&source, &mut y);
             render_delay_buffer.insert(&x);
             if block_idx == 0 {
                 render_delay_buffer.reset();

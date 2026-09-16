@@ -130,6 +130,7 @@ impl ErleEstimator {
 mod tests {
     use super::*;
     use crate::audio_processing::aec3::aec3_common::{BLOCK_SIZE, num_bands_for_rate};
+    use crate::audio_processing::aec3::block::Block;
     use crate::audio_processing::aec3::render_delay_buffer::RenderDelayBuffer;
 
     const K_SAMPLE_RATE_HZ: i32 = 48_000;
@@ -137,7 +138,7 @@ mod tests {
     const K_TRUE_ERLE_ONSETS: f32 = 1.0;
     const K_ECHO_PATH_GAIN: f32 = 3.0;
 
-    fn form_farend_time_frame(x: &mut [Vec<Vec<f32>>]) {
+    fn form_farend_time_frame(x: &mut Block) {
         const FRAME: [f32; BLOCK_SIZE] = [
             7459.88, 17209.6, 17383.0, 20768.9, 16816.7, 18386.3, 4492.83, 9675.85, 6665.52,
             14808.6, 9342.3, 7483.28, 19261.7, 4145.98, 1622.18, 13475.2, 7166.32, 6856.61,
@@ -147,9 +148,9 @@ mod tests {
             19350.2, 3157.47, 18095.8, 1743.68, 21328.2, 19727.5, 7295.16, 10332.4, 11055.5,
             20107.4, 14708.4, 12416.2, 16434.0, 2454.69, 9840.8, 6867.23, 1615.75, 6059.9, 8394.19,
         ];
-        for band in x.iter_mut() {
-            for channel in band.iter_mut() {
-                channel.copy_from_slice(&FRAME);
+        for band in 0..x.num_bands() {
+            for channel in 0..x.num_channels() {
+                x.view_mut(band, channel).copy_from_slice(&FRAME);
             }
         }
     }
@@ -179,16 +180,12 @@ mod tests {
     }
 
     fn form_nearend_frame(
-        x: &mut [Vec<Vec<f32>>],
+        x: &mut Block,
         x2: &mut [f32; FFT_LENGTH_BY_2_PLUS_1],
         e2: &mut [[f32; FFT_LENGTH_BY_2_PLUS_1]],
         y2: &mut [[f32; FFT_LENGTH_BY_2_PLUS_1]],
     ) {
-        for band in x.iter_mut() {
-            for channel in band.iter_mut() {
-                channel.fill(0.0);
-            }
-        }
+        x.fill(0.0);
         x2.fill(0.0);
         for ch in 0..y2.len() {
             y2[ch].fill(500.0 * 1_000_000.0);
@@ -247,7 +244,7 @@ mod tests {
                 let mut config = EchoCanceller3Config::default();
                 config.erle.onset_detection = true;
 
-                let mut x = vec![vec![vec![0.0f32; BLOCK_SIZE]; num_render_channels]; k_num_bands];
+                let mut x = Block::new(k_num_bands, num_render_channels);
 
                 let mut filter_frequency_response =
                     vec![
@@ -321,7 +318,7 @@ mod tests {
                 let mut config = EchoCanceller3Config::default();
                 config.erle.onset_detection = true;
 
-                let mut x = vec![vec![vec![0.0f32; BLOCK_SIZE]; num_render_channels]; k_num_bands];
+                let mut x = Block::new(k_num_bands, num_render_channels);
 
                 let mut filter_frequency_response =
                     vec![

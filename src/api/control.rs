@@ -58,6 +58,11 @@ pub trait EchoControl {
     /// Provides an optional external estimate of the audio buffer delay.
     fn set_audio_buffer_delay(&mut self, delay_ms: i32);
 
+    /// Specifies whether the capture output will be used, allowing the echo
+    /// controller to skip processing whose result would be discarded, for
+    /// instance when the endpoint is muted.
+    fn set_capture_output_usage(&mut self, _capture_output_used: bool) {}
+
     /// Whether the signal is altered.
     fn active_processing(&self) -> bool;
 }

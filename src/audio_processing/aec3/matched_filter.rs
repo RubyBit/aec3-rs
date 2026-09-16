@@ -52,7 +52,8 @@ pub struct MatchedFilter {
     filters: Vec<Vec<f32>>,
     lag_estimates: Vec<LagEstimate>,
     excitation_limit: f32,
-    smoothing: f32,
+    smoothing_fast: f32,
+    smoothing_slow: f32,
     matching_filter_threshold: f32,
 }
 
@@ -66,7 +67,8 @@ impl MatchedFilter {
         num_matched_filters: usize,
         alignment_shift_sub_blocks: usize,
         excitation_limit: f32,
-        smoothing: f32,
+        smoothing_fast: f32,
+        smoothing_slow: f32,
         matching_filter_threshold: f32,
     ) -> Self {
         assert!(
@@ -97,7 +99,8 @@ impl MatchedFilter {
             filters,
             lag_estimates,
             excitation_limit,
-            smoothing,
+            smoothing_fast,
+            smoothing_slow,
             matching_filter_threshold,
         }
     }
@@ -111,10 +114,20 @@ impl MatchedFilter {
         }
     }
 
-    pub fn update(&mut self, render_buffer: &DownsampledRenderBuffer, capture: &[f32]) {
+    pub fn update(
+        &mut self,
+        render_buffer: &DownsampledRenderBuffer,
+        capture: &[f32],
+        use_slow_smoothing: bool,
+    ) {
         if self.filters.is_empty() {
             return;
         }
+        let smoothing = if use_slow_smoothing {
+            self.smoothing_slow
+        } else {
+            self.smoothing_fast
+        };
         assert_eq!(self.sub_block_size, capture.len());
         let render_samples = &render_buffer.buffer;
         assert!(!render_samples.is_empty());
@@ -133,7 +146,7 @@ impl MatchedFilter {
                 Aec3Optimization::Avx2 => matched_filter_core_avx2(
                     start,
                     x2_sum_threshold,
-                    self.smoothing,
+                    smoothing,
                     render_samples,
                     capture,
                     filter,
@@ -141,7 +154,7 @@ impl MatchedFilter {
                 Aec3Optimization::Sse2 => matched_filter_core_sse2(
                     start,
                     x2_sum_threshold,
-                    self.smoothing,
+                    smoothing,
                     render_samples,
                     capture,
                     filter,
@@ -149,7 +162,7 @@ impl MatchedFilter {
                 Aec3Optimization::Neon => matched_filter_core_neon(
                     start,
                     x2_sum_threshold,
-                    self.smoothing,
+                    smoothing,
                     render_samples,
                     capture,
                     filter,
@@ -157,7 +170,7 @@ impl MatchedFilter {
                 Aec3Optimization::None => matched_filter_core(
                     start,
                     x2_sum_threshold,
-                    self.smoothing,
+                    smoothing,
                     render_samples,
                     capture,
                     filter,
@@ -664,6 +677,7 @@ mod tests {
         MATCHED_FILTER_ALIGNMENT_SHIFT_SIZE_SUB_BLOCKS, MATCHED_FILTER_WINDOW_SIZE_SUB_BLOCKS,
         detect_optimization,
     };
+    use crate::audio_processing::aec3::block::Block;
     use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
     use crate::test_support::echo_canceller_test_tools::randomize_sample_vector_with_amplitude;
     use crate::test_support::random::Random;
@@ -803,7 +817,7 @@ mod tests {
             let num_bands = crate::audio_processing::aec3::aec3_common::num_bands_for_rate(48_000);
 
             // Prepare storage for render and capture blocks.
-            let mut render = vec![vec![vec![0.0f32; BLOCK_SIZE]; num_channels]; num_bands];
+            let mut render = Block::new(num_bands, num_channels);
             let mut capture = vec![vec![0.0f32; BLOCK_SIZE]; 1];
 
             for &delay_samples in &[5usize, 64, 150, 200, 800, 1000] {
@@ -827,6 +841,7 @@ mod tests {
                     MATCHED_FILTER_ALIGNMENT_SHIFT_SIZE_SUB_BLOCKS,
                     150.0,
                     cfg.delay.delay_estimate_smoothing,
+                    cfg.delay.delay_estimate_smoothing_delay_found,
                     cfg.delay.delay_candidate_detection_threshold,
                 );
 
@@ -848,14 +863,15 @@ mod tests {
                         for ch in 0..num_channels {
                             randomize_sample_vector_with_amplitude(
                                 &mut rng,
-                                &mut render[band][ch],
+                                render.view_mut(band, ch),
                                 NON_SATURATING_AMPLITUDE,
                             );
                         }
                     }
 
                     // Delay render into capture (only use band 0, channel 0 like the ref).
-                    signal_delay_buffer.delay(&render[0][0], &mut capture[0]);
+                    let source = *render.view(0, 0);
+                    signal_delay_buffer.delay(&source, &mut capture[0]);
 
                     // Insert render block into RenderDelayBuffer and prepare capture.
                     render_delay_buffer.insert(&render);
@@ -869,6 +885,7 @@ mod tests {
                     filter.update(
                         render_delay_buffer.downsampled_render_buffer(),
                         &downsampled_capture,
+                        /*use_slow_smoothing=*/ false,
                     );
                 }
 
@@ -939,6 +956,7 @@ mod tests {
                 MATCHED_FILTER_ALIGNMENT_SHIFT_SIZE_SUB_BLOCKS,
                 150.0,
                 config.delay.delay_estimate_smoothing,
+                config.delay.delay_estimate_smoothing_delay_found,
                 config.delay.delay_candidate_detection_threshold,
             );
 
@@ -951,7 +969,7 @@ mod tests {
                     &mut capture,
                     NON_SATURATING_AMPLITUDE,
                 );
-                filter.update(&buffer, &capture);
+                filter.update(&buffer, &capture, /*use_slow_smoothing=*/ false);
             }
 
             assert!(
@@ -980,6 +998,7 @@ mod tests {
                 MATCHED_FILTER_ALIGNMENT_SHIFT_SIZE_SUB_BLOCKS,
                 150.0,
                 config.delay.delay_estimate_smoothing,
+                config.delay.delay_estimate_smoothing_delay_found,
                 config.delay.delay_candidate_detection_threshold,
             );
 
@@ -994,7 +1013,7 @@ mod tests {
                     sub_block_size,
                     &mut capture,
                 );
-                filter.update(&buffer, &capture);
+                filter.update(&buffer, &capture, /*use_slow_smoothing=*/ false);
             }
 
             assert!(
@@ -1021,6 +1040,7 @@ mod tests {
                     1,
                     150.0,
                     config.delay.delay_estimate_smoothing,
+                    config.delay.delay_estimate_smoothing_delay_found,
                     config.delay.delay_candidate_detection_threshold,
                 );
                 assert_eq!(num_filters, filter.lag_estimates().len());

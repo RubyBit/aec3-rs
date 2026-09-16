@@ -1,8 +1,9 @@
 use crate::audio_processing::aec3::aec3_common::{
-    Aec3Optimization, BLOCK_SIZE, FFT_LENGTH, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1,
-    num_bands_for_rate, valid_full_band_rate,
+    Aec3Optimization, FFT_LENGTH, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1, num_bands_for_rate,
+    valid_full_band_rate,
 };
 use crate::audio_processing::aec3::aec3_fft::Aec3Fft;
+use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::fft_data::FftData;
 use crate::audio_processing::aec3::vector_math::VectorMath;
 
@@ -47,7 +48,7 @@ impl SuppressionFilter {
         suppression_gain: &[f32; FFT_LENGTH_BY_2_PLUS_1],
         high_bands_gain: f32,
         e_lowest_band: &[FftData],
-        mut e: Option<&mut Vec<Vec<Vec<f32>>>>,
+        mut e: Option<&mut Block>,
     ) {
         let e = e
             .as_deref_mut()
@@ -57,14 +58,9 @@ impl SuppressionFilter {
         assert_eq!(e_lowest_band.len(), self.num_capture_channels);
         let expected_bands = num_bands_for_rate(self.sample_rate_hz);
         assert_eq!(expected_bands, self.e_output_old.len());
-        assert_eq!(e.len(), expected_bands);
+        assert_eq!(e.num_bands(), expected_bands);
+        assert_eq!(e.num_channels(), self.num_capture_channels);
         let num_bands = expected_bands;
-        for band in 0..num_bands {
-            assert_eq!(e[band].len(), self.num_capture_channels);
-            for channel in 0..self.num_capture_channels {
-                assert_eq!(e[band][channel].len(), BLOCK_SIZE);
-            }
-        }
 
         let vector_math = VectorMath::new(self.optimization);
         let mut suppression_gain_sq = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
@@ -97,7 +93,7 @@ impl SuppressionFilter {
             let mut e_extended = [0.0f32; FFT_LENGTH];
             self.fft.ifft(&spectrum, &mut e_extended);
 
-            let e0 = &mut e[0][ch];
+            let e0 = e.view_mut(0, ch);
             let e0_old = &mut self.e_output_old[0][ch];
             for i in 0..FFT_LENGTH_BY_2 {
                 e0[i] = e0_old[i] * K_SQRT_HANNING[FFT_LENGTH_BY_2 + i]
@@ -107,7 +103,7 @@ impl SuppressionFilter {
             e0_old.copy_from_slice(&e_extended[FFT_LENGTH_BY_2..]);
 
             for band in 1..num_bands {
-                for sample in &mut e[band][ch] {
+                for sample in e.view_mut(band, ch).iter_mut() {
                     *sample *= high_bands_gain;
                 }
             }
@@ -117,7 +113,7 @@ impl SuppressionFilter {
                 noise_fft.assign(&comfort_noise_high_bands[ch]);
                 let mut noise_td = [0.0f32; FFT_LENGTH];
                 self.fft.ifft(&noise_fft, &mut noise_td);
-                let e1 = &mut e[1][ch];
+                let e1 = e.view_mut(1, ch);
                 let gain = high_bands_noise_scaling * IFFT_NORM;
                 for i in 0..FFT_LENGTH_BY_2 {
                     e1[i] += noise_td[i] * gain;
@@ -125,7 +121,7 @@ impl SuppressionFilter {
             }
 
             for band in 1..num_bands {
-                let current = &mut e[band][ch];
+                let current = e.view_mut(band, ch);
                 let previous_storage = &mut self.e_output_old[band][ch];
                 for i in 0..FFT_LENGTH_BY_2 {
                     std::mem::swap(&mut current[i], &mut previous_storage[i]);
@@ -133,7 +129,7 @@ impl SuppressionFilter {
             }
 
             for band in 0..num_bands {
-                for sample in &mut e[band][ch] {
+                for sample in e.view_mut(band, ch).iter_mut() {
                     *sample = sample.clamp(-32_768.0, 32_767.0);
                 }
             }
@@ -309,13 +305,18 @@ mod tests {
         cn_high[0].im.fill(1.0);
         let gain = [1.0f32; FFT_LENGTH_BY_2_PLUS_1];
         let num_bands = num_bands_for_rate(48_000);
-        let mut e_time = vec![vec![vec![0.0f32; BLOCK_SIZE]; 1]; num_bands];
+        let mut e_time = Block::new(num_bands, 1);
         let e_ref = e_time.clone();
         let mut e_old = [0.0f32; FFT_LENGTH_BY_2];
         let fft = Aec3Fft::new();
         let mut spectrum = vec![FftData::default()];
-        fft.padded_fft_with_window(&e_time[0][0], &e_old, Window::SqrtHanning, &mut spectrum[0]);
-        e_old.copy_from_slice(&e_time[0][0]);
+        fft.padded_fft_with_window(
+            e_time.view(0, 0),
+            &e_old,
+            Window::SqrtHanning,
+            &mut spectrum[0],
+        );
+        e_old.copy_from_slice(e_time.view(0, 0));
         filter.apply_gain(&cn, &cn_high, &gain, 1.0, &spectrum, Some(&mut e_time));
         assert_eq!(e_time, e_ref);
     }
@@ -324,18 +325,18 @@ mod tests {
         sample_rate_hz: i32,
         sinusoidal_frequency_hz: f32,
         sample_counter: &mut usize,
-        x: &mut [Vec<Vec<f32>>],
+        x: &mut Block,
     ) {
         for (j, k) in (*sample_counter..(*sample_counter + BLOCK_SIZE)).enumerate() {
             let angle = 2.0 * PI * sinusoidal_frequency_hz * k as f32 / sample_rate_hz as f32;
-            for channel in 0..x[0].len() {
-                x[0][channel][j] = 32_767.0f32 * angle.sin();
+            for channel in 0..x.num_channels() {
+                x.view_mut(0, channel)[j] = 32_767.0f32 * angle.sin();
             }
         }
         *sample_counter += BLOCK_SIZE;
-        for band in x.iter_mut().skip(1) {
-            for channel in band.iter_mut() {
-                channel.fill(0.0);
+        for band in 1..x.num_bands() {
+            for channel in 0..x.num_channels() {
+                x.view_mut(band, channel).fill(0.0);
             }
         }
     }
@@ -357,7 +358,7 @@ mod tests {
         cn_high[0].re.fill(0.0);
         cn_high[0].im.fill(0.0);
         let num_bands = num_bands_for_rate(SAMPLE_RATE_HZ);
-        let mut e_time = vec![vec![vec![0.0f32; BLOCK_SIZE]; NUM_CHANNELS]; num_bands];
+        let mut e_time = Block::new(num_bands, NUM_CHANNELS);
         let fft = Aec3Fft::new();
         let mut e_old = [0.0f32; FFT_LENGTH_BY_2];
         let mut spectrum = vec![FftData::default(); NUM_CHANNELS];
@@ -371,16 +372,16 @@ mod tests {
                 &mut sample_counter,
                 &mut e_time,
             );
-            e0_input += e_time[0][0].iter().map(|v| v * v).sum::<f32>();
+            e0_input += e_time.view(0, 0).iter().map(|v| v * v).sum::<f32>();
             fft.padded_fft_with_window(
-                &e_time[0][0],
+                e_time.view(0, 0),
                 &e_old,
                 Window::SqrtHanning,
                 &mut spectrum[0],
             );
-            e_old.copy_from_slice(&e_time[0][0]);
+            e_old.copy_from_slice(e_time.view(0, 0));
             filter.apply_gain(&cn, &cn_high, &gain, 1.0, &spectrum, Some(&mut e_time));
-            e0_output += e_time[0][0].iter().map(|v| v * v).sum::<f32>();
+            e0_output += e_time.view(0, 0).iter().map(|v| v * v).sum::<f32>();
         }
         assert!(e0_output < e0_input / 1000.0f32);
     }
@@ -402,7 +403,7 @@ mod tests {
         cn_high[0].re.fill(0.0);
         cn_high[0].im.fill(0.0);
         let num_bands = num_bands_for_rate(SAMPLE_RATE_HZ);
-        let mut e_time = vec![vec![vec![0.0f32; BLOCK_SIZE]; NUM_CHANNELS]; num_bands];
+        let mut e_time = Block::new(num_bands, NUM_CHANNELS);
         let fft = Aec3Fft::new();
         let mut e_old = [0.0f32; FFT_LENGTH_BY_2];
         let mut spectrum = vec![FftData::default(); NUM_CHANNELS];
@@ -416,16 +417,16 @@ mod tests {
                 &mut sample_counter,
                 &mut e_time,
             );
-            e0_input += e_time[0][0].iter().map(|v| v * v).sum::<f32>();
+            e0_input += e_time.view(0, 0).iter().map(|v| v * v).sum::<f32>();
             fft.padded_fft_with_window(
-                &e_time[0][0],
+                e_time.view(0, 0),
                 &e_old,
                 Window::SqrtHanning,
                 &mut spectrum[0],
             );
-            e_old.copy_from_slice(&e_time[0][0]);
+            e_old.copy_from_slice(e_time.view(0, 0));
             filter.apply_gain(&cn, &cn_high, &gain, 1.0, &spectrum, Some(&mut e_time));
-            e0_output += e_time[0][0].iter().map(|v| v * v).sum::<f32>();
+            e0_output += e_time.view(0, 0).iter().map(|v| v * v).sum::<f32>();
         }
         assert!(0.9f32 * e0_input < e0_output);
     }
@@ -440,7 +441,7 @@ mod tests {
         let cn_high = vec![FftData::default(); NUM_CHANNELS];
         let gain = [1.0f32; FFT_LENGTH_BY_2_PLUS_1];
         let num_bands = num_bands_for_rate(SAMPLE_RATE_HZ);
-        let mut e_time = vec![vec![vec![0.0f32; BLOCK_SIZE]; NUM_CHANNELS]; num_bands];
+        let mut e_time = Block::new(num_bands, NUM_CHANNELS);
         let fft = Aec3Fft::new();
         let mut e_old = [0.0f32; FFT_LENGTH_BY_2];
         let mut spectrum = vec![FftData::default(); NUM_CHANNELS];
@@ -449,18 +450,19 @@ mod tests {
             for band in 0..num_bands {
                 for channel in 0..NUM_CHANNELS {
                     for sample in 0..BLOCK_SIZE {
-                        e_time[band][channel][sample] = (k * BLOCK_SIZE + sample + channel) as f32;
+                        e_time.view_mut(band, channel)[sample] =
+                            (k * BLOCK_SIZE + sample + channel) as f32;
                     }
                 }
             }
 
             fft.padded_fft_with_window(
-                &e_time[0][0],
+                e_time.view(0, 0),
                 &e_old,
                 Window::SqrtHanning,
                 &mut spectrum[0],
             );
-            e_old.copy_from_slice(&e_time[0][0]);
+            e_old.copy_from_slice(e_time.view(0, 0));
             filter.apply_gain(&cn, &cn_high, &gain, 1.0, &spectrum, Some(&mut e_time));
 
             if k > 2 {
@@ -468,7 +470,7 @@ mod tests {
                     for channel in 0..NUM_CHANNELS {
                         for sample in 0..BLOCK_SIZE {
                             let expected = (k * BLOCK_SIZE + sample - BLOCK_SIZE + channel) as f32;
-                            let actual = e_time[band][channel][sample];
+                            let actual = e_time.view(band, channel)[sample];
                             assert!((actual - expected).abs() < 0.01);
                         }
                     }

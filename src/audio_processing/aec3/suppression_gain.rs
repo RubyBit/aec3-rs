@@ -3,6 +3,7 @@ use crate::audio_processing::aec3::aec_state::AecState;
 use crate::audio_processing::aec3::aec3_common::{
     Aec3Optimization, BLOCK_SIZE, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_MINUS_1, FFT_LENGTH_BY_2_PLUS_1,
 };
+use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::dominant_nearend_detector::DominantNearendDetector;
 use crate::audio_processing::aec3::moving_average::MovingAverage;
 use crate::audio_processing::aec3::nearend_detector::NearendDetector;
@@ -50,8 +51,16 @@ impl SuppressionGain {
                 )
             })
             .collect();
-        let nearend_params = GainParameters::new(&config.suppressor.nearend_tuning);
-        let normal_params = GainParameters::new(&config.suppressor.normal_tuning);
+        let nearend_params = GainParameters::new(
+            config.suppressor.last_lf_band,
+            config.suppressor.first_hf_band,
+            &config.suppressor.nearend_tuning,
+        );
+        let normal_params = GainParameters::new(
+            config.suppressor.last_lf_band,
+            config.suppressor.first_hf_band,
+            &config.suppressor.normal_tuning,
+        );
         let detector: Box<dyn NearendDetector> = if config.suppressor.use_subband_nearend_detection
         {
             Box::new(SubbandNearendDetector::new(
@@ -102,7 +111,7 @@ impl SuppressionGain {
         comfort_noise_spectrum: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         render_signal_analyzer: &RenderSignalAnalyzer,
         aec_state: &AecState,
-        render: &[Vec<Vec<f32>>],
+        render: &Block,
         clock_drift: bool,
         high_bands_gain: Option<&mut f32>,
         low_band_gain: Option<&mut [f32; FFT_LENGTH_BY_2_PLUS_1]>,
@@ -113,7 +122,7 @@ impl SuppressionGain {
         assert_eq!(echo_spectrum.len(), self.num_capture_channels);
         assert_eq!(residual_echo_spectrum.len(), self.num_capture_channels);
         assert_eq!(comfort_noise_spectrum.len(), self.num_capture_channels);
-        assert!(!render.is_empty());
+        assert!(render.num_channels() > 0);
 
         self.nearend_detector.update(
             nearend_spectrum,
@@ -150,10 +159,10 @@ impl SuppressionGain {
         comfort_noise_spectrum: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         narrow_peak_band: Option<usize>,
         saturated_echo: bool,
-        render: &[Vec<Vec<f32>>],
+        render: &Block,
         low_band_gain: &[f32; FFT_LENGTH_BY_2_PLUS_1],
     ) -> f32 {
-        if render.len() == 1 {
+        if render.num_bands() == 1 {
             return 1.0;
         }
 
@@ -178,8 +187,8 @@ impl SuppressionGain {
 
         let mut low_band_energy = 0.0f32;
         let mut high_band_energy = 0.0f32;
-        for (band_index, band) in render.iter().enumerate() {
-            for channel in band {
+        for band_index in 0..render.num_bands() {
+            for channel in render.band_channels(band_index) {
                 let energy: f32 = channel.iter().map(|s| s * s).sum();
                 if band_index == 0 {
                     low_band_energy = low_band_energy.max(energy);
@@ -351,14 +360,24 @@ impl SuppressionGain {
             min_gain[k] = value.min(1.0);
         }
 
-        let dec = if self.nearend_detector.is_nearend_state() {
-            self.nearend_params.max_dec_factor_lf
-        } else {
-            self.normal_params.max_dec_factor_lf
-        };
-        for k in 0..6 {
-            if last_nearend[k] > last_echo[k] {
-                min_gain[k] = min_gain[k].max(self.last_gain[k] * dec).min(1.0);
+        let suppressor = &self.config.suppressor;
+        if !self.initial_state || suppressor.lf_smoothing_during_initial_phase {
+            let dec = if self.nearend_detector.is_nearend_state() {
+                self.nearend_params.max_dec_factor_lf
+            } else {
+                self.normal_params.max_dec_factor_lf
+            };
+            let last_band = suppressor
+                .last_lf_smoothing_band
+                .min(FFT_LENGTH_BY_2_PLUS_1 - 1);
+            for k in 0..=last_band {
+                // Make sure the gains of the low frequencies do not decrease too
+                // quickly after strong nearend.
+                if last_nearend[k] > last_echo[k]
+                    || k <= suppressor.last_permanent_lf_smoothing_band
+                {
+                    min_gain[k] = min_gain[k].max(self.last_gain[k] * dec).min(1.0);
+                }
             }
         }
     }
@@ -465,17 +484,16 @@ struct GainParameters {
 }
 
 impl GainParameters {
-    fn new(tuning: &crate::api::config::Tuning) -> Self {
-        const LAST_LF_BAND: usize = 5;
-        const FIRST_HF_BAND: usize = 8;
+    fn new(last_lf_band: usize, first_hf_band: usize, tuning: &crate::api::config::Tuning) -> Self {
+        debug_assert!(last_lf_band < first_hf_band);
         let mut enr_transparent = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
         let mut enr_suppress = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
         let mut emr_transparent = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
         for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
-            let alpha = if k <= LAST_LF_BAND {
+            let alpha = if k <= last_lf_band {
                 0.0
-            } else if k < FIRST_HF_BAND {
-                (k - LAST_LF_BAND) as f32 / (FIRST_HF_BAND - LAST_LF_BAND) as f32
+            } else if k < first_hf_band {
+                (k - last_lf_band) as f32 / (first_hf_band - last_lf_band) as f32
             } else {
                 1.0
             };
@@ -509,20 +527,20 @@ impl Default for LowNoiseRenderDetector {
 }
 
 impl LowNoiseRenderDetector {
-    fn detect(&mut self, render: &[Vec<Vec<f32>>]) -> bool {
-        if render.is_empty() || render[0].is_empty() {
+    fn detect(&mut self, render: &Block) -> bool {
+        if render.num_channels() == 0 {
             return false;
         }
         let mut x2_sum = 0.0f32;
         let mut x2_max = 0.0f32;
-        for channel in &render[0] {
+        for channel in render.band_channels(0) {
             for &sample in channel {
                 let x2 = sample * sample;
                 x2_sum += x2;
                 x2_max = x2_max.max(x2);
             }
         }
-        let num_render_channels = render[0].len() as f32;
+        let num_render_channels = render.num_channels() as f32;
         if num_render_channels == 0.0 {
             return false;
         }
@@ -540,12 +558,146 @@ mod tests {
     use crate::api::config::EchoCanceller3Config;
     use crate::audio_processing::aec3::aec_state::AecState;
     use crate::audio_processing::aec3::aec3_common::{
-        BLOCK_SIZE, NUM_BLOCKS_PER_SECOND, detect_optimization, get_time_domain_length,
-        num_bands_for_rate,
+        NUM_BLOCKS_PER_SECOND, detect_optimization, get_time_domain_length, num_bands_for_rate,
     };
     use crate::audio_processing::aec3::render_delay_buffer::RenderDelayBuffer;
     use crate::audio_processing::aec3::render_signal_analyzer::RenderSignalAnalyzer;
     use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
+
+    /// Drives `get_min_gain` with a residual echo large enough that the raw
+    /// minimum gain lands far below the smoothing floor.
+    fn min_gain_for(
+        config: EchoCanceller3Config,
+        initial_state: bool,
+        nearend_above_echo: bool,
+    ) -> [f32; FFT_LENGTH_BY_2_PLUS_1] {
+        let mut gain = SuppressionGain::new(config, detect_optimization(), 48_000, 1);
+        gain.initial_state = initial_state;
+
+        let weighted_residual_echo = [64_000.0f32; FFT_LENGTH_BY_2_PLUS_1];
+        let (last_nearend, last_echo) = if nearend_above_echo {
+            (
+                [2.0f32; FFT_LENGTH_BY_2_PLUS_1],
+                [1.0f32; FFT_LENGTH_BY_2_PLUS_1],
+            )
+        } else {
+            (
+                [1.0f32; FFT_LENGTH_BY_2_PLUS_1],
+                [2.0f32; FFT_LENGTH_BY_2_PLUS_1],
+            )
+        };
+
+        let mut min_gain = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
+        gain.get_min_gain(
+            &weighted_residual_echo,
+            &last_nearend,
+            &last_echo,
+            /*low_noise_render=*/ false,
+            /*saturated_echo=*/ false,
+            &mut min_gain,
+        );
+        min_gain
+    }
+
+    #[test]
+    fn permanent_lf_smoothing_applies_without_nearend_dominance() {
+        let config = EchoCanceller3Config::default();
+        let dec = config.suppressor.normal_tuning.max_dec_factor_lf;
+        let min_gain = min_gain_for(
+            config, /*initial_state=*/ false, /*nearend_above_echo=*/ false,
+        );
+
+        assert!(
+            (min_gain[0] - dec).abs() < 1e-6,
+            "band 0 is permanently smoothed, got {}",
+            min_gain[0]
+        );
+        for k in 1..=5 {
+            assert!(
+                min_gain[k] < 0.01,
+                "band {k} should not be smoothed while echo dominates, got {}",
+                min_gain[k]
+            );
+        }
+    }
+
+    #[test]
+    fn lf_smoothing_covers_bands_up_to_the_configured_limit() {
+        let config = EchoCanceller3Config::default();
+        let dec = config.suppressor.normal_tuning.max_dec_factor_lf;
+        let last_band = config.suppressor.last_lf_smoothing_band;
+        let min_gain = min_gain_for(
+            config, /*initial_state=*/ false, /*nearend_above_echo=*/ true,
+        );
+
+        for k in 0..=last_band {
+            assert!(
+                (min_gain[k] - dec).abs() < 1e-6,
+                "band {k} should be smoothed, got {}",
+                min_gain[k]
+            );
+        }
+        assert!(
+            min_gain[last_band + 1] < 0.01,
+            "band above the smoothing limit should be untouched, got {}",
+            min_gain[last_band + 1]
+        );
+    }
+
+    #[test]
+    fn lf_smoothing_during_initial_phase_gates_only_the_initial_phase() {
+        let mut config = EchoCanceller3Config::default();
+        config.suppressor.lf_smoothing_during_initial_phase = false;
+        let dec = config.suppressor.normal_tuning.max_dec_factor_lf;
+
+        let during_initial = min_gain_for(
+            config.clone(),
+            /*initial_state=*/ true,
+            /*nearend_above_echo=*/ true,
+        );
+        for k in 0..=config.suppressor.last_lf_smoothing_band {
+            assert!(
+                during_initial[k] < 0.01,
+                "band {k} should not be smoothed in the initial phase, got {}",
+                during_initial[k]
+            );
+        }
+
+        let after_initial = min_gain_for(
+            config.clone(),
+            /*initial_state=*/ false,
+            /*nearend_above_echo=*/ true,
+        );
+        assert!((after_initial[0] - dec).abs() < 1e-6);
+
+        config.suppressor.lf_smoothing_during_initial_phase = true;
+        let enabled = min_gain_for(
+            config, /*initial_state=*/ true, /*nearend_above_echo=*/ true,
+        );
+        assert!((enabled[0] - dec).abs() < 1e-6);
+    }
+
+    #[test]
+    fn masking_threshold_bands_are_configurable() {
+        let config = EchoCanceller3Config::default();
+        let tuning = &config.suppressor.normal_tuning;
+
+        let default_params = GainParameters::new(
+            config.suppressor.last_lf_band,
+            config.suppressor.first_hf_band,
+            tuning,
+        );
+        assert!((default_params.enr_transparent[5] - tuning.mask_lf.enr_transparent).abs() < 1e-6);
+        assert!((default_params.enr_transparent[8] - tuning.mask_hf.enr_transparent).abs() < 1e-6);
+        // Band 6 interpolates between the two sets.
+        assert!(default_params.enr_transparent[6] < tuning.mask_lf.enr_transparent);
+        assert!(default_params.enr_transparent[6] > tuning.mask_hf.enr_transparent);
+
+        // Widening the window moves band 6 onto the LF side.
+        let wide_params = GainParameters::new(10, 20, tuning);
+        assert!((wide_params.enr_transparent[6] - tuning.mask_lf.enr_transparent).abs() < 1e-6);
+        assert!((wide_params.enr_transparent[20] - tuning.mask_hf.enr_transparent).abs() < 1e-6);
+    }
 
     /// The band-29 bound is part of conservative HF suppression, which is off
     /// by default upstream. Enabling it must not be a no-op, and leaving it off
@@ -598,7 +750,10 @@ mod tests {
         );
         assert!((limited[16] - 0.25).abs() < 1e-6);
         assert!((limited[17] - 0.25).abs() < 1e-6);
-        assert!((limited[15] - 1.0).abs() < 1e-6, "bands below were modified");
+        assert!(
+            (limited[15] - 1.0).abs() < 1e-6,
+            "bands below were modified"
+        );
 
         let mut disabled = gain;
         limit_high_frequency_gains(
@@ -630,7 +785,7 @@ mod tests {
         let config = EchoCanceller3Config::default();
         let mut gain = SuppressionGain::new(config.clone(), detect_optimization(), 16_000, 1);
         let spectrum = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]];
-        let render: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; BLOCK_SIZE]]];
+        let render = Block::new(1, 1);
         let analyzer = RenderSignalAnalyzer::new(&config);
         let aec_state = AecState::new(config, 1);
         gain.get_gain(
@@ -655,7 +810,7 @@ mod tests {
         let mut high_bands_gain = 0.0f32;
         let mut low_band_gain = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
         let num_bands = num_bands_for_rate(SAMPLE_RATE_HZ);
-        let render = vec![vec![vec![0.0f32; BLOCK_SIZE]; NUM_RENDER_CHANNELS]; num_bands];
+        let render = Block::new(num_bands, NUM_RENDER_CHANNELS);
         let mut e2 = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; NUM_CAPTURE_CHANNELS];
         let mut s2 = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; NUM_CAPTURE_CHANNELS];
         let mut y2 = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; NUM_CAPTURE_CHANNELS];

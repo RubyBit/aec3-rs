@@ -1,7 +1,8 @@
 use crate::api::config::EchoCanceller3Config;
 use crate::audio_processing::aec3::aec3_common::{
-    BLOCK_SIZE, BLOCK_SIZE_LOG2, NUM_BLOCKS_PER_SECOND, valid_full_band_rate,
+    BLOCK_SIZE_LOG2, NUM_BLOCKS_PER_SECOND, valid_full_band_rate,
 };
+use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::clockdrift_detector::ClockDriftLevel;
 use crate::audio_processing::aec3::delay_estimate::{DelayEstimate, DelayEstimateQuality};
 use crate::audio_processing::aec3::downsampled_render_buffer::DownsampledRenderBuffer;
@@ -65,11 +66,9 @@ impl RenderDelayController {
         &mut self,
         render_buffer: &DownsampledRenderBuffer,
         render_delay_buffer_delay: usize,
-        capture: &[Vec<f32>],
+        capture: &Block,
     ) -> Option<DelayEstimate> {
         let _ = render_delay_buffer_delay;
-        debug_assert!(!capture.is_empty());
-        debug_assert_eq!(capture[0].len(), BLOCK_SIZE);
 
         self.capture_call_counter += 1;
 
@@ -177,20 +176,19 @@ fn compute_buffer_delay(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio_processing::aec3::aec3_common::BLOCK_SIZE;
     use crate::audio_processing::aec3::aec3_common::num_bands_for_rate;
     use crate::audio_processing::aec3::render_delay_buffer::RenderDelayBuffer;
     use crate::test_support::echo_canceller_test_tools::{DelayBuffer, randomize_sample_vector};
     use crate::test_support::random::Random;
     use std::cmp::max;
 
-    fn make_render_block(num_bands: usize, num_channels: usize) -> Vec<Vec<Vec<f32>>> {
-        (0..num_bands)
-            .map(|_| vec![vec![0.0f32; BLOCK_SIZE]; num_channels])
-            .collect()
+    fn make_render_block(num_bands: usize, num_channels: usize) -> Block {
+        Block::new(num_bands, num_channels)
     }
 
-    fn zero_capture(num_channels: usize) -> Vec<Vec<f32>> {
-        vec![vec![0.0f32; BLOCK_SIZE]; num_channels]
+    fn zero_capture(num_channels: usize) -> Block {
+        Block::new(1, num_channels)
     }
 
     #[test]
@@ -301,19 +299,18 @@ mod tests {
                                 let mut delay_blocks = None;
                                 let iterations = 400 + delay_samples / BLOCK_SIZE;
                                 for _ in 0..iterations {
-                                    for band in 0..render_block.len() {
-                                        for channel in 0..render_block[band].len() {
+                                    for band in 0..render_block.num_bands() {
+                                        for channel in 0..render_block.num_channels() {
                                             randomize_sample_vector(
                                                 &mut rng,
-                                                &mut render_block[band][channel],
+                                                render_block.view_mut(band, channel),
                                             );
                                         }
                                     }
                                     {
-                                        let capture_ch0 = capture_block
-                                            .get_mut(0)
-                                            .expect("at least one capture channel");
-                                        signal_delay_buffer.delay(&render_block[0][0], capture_ch0);
+                                        let source = *render_block.view(0, 0);
+                                        signal_delay_buffer
+                                            .delay(&source, capture_block.view_mut(0, 0));
                                     }
                                     render_delay_buffer.insert(&render_block);
                                     render_delay_buffer.prepare_capture_processing();
@@ -368,14 +365,9 @@ mod tests {
                                     (400 - (delay_samples / BLOCK_SIZE as i32)) as usize;
                                 let mut delay_blocks = None;
                                 for _ in 0..iterations {
-                                    {
-                                        let capture_ch0 = capture_block
-                                            .get_mut(0)
-                                            .expect("at least one capture channel");
-                                        randomize_sample_vector(&mut rng, capture_ch0);
-                                    }
-                                    signal_delay_buffer
-                                        .delay(&capture_block[0], &mut render_block[0][0]);
+                                    randomize_sample_vector(&mut rng, capture_block.view_mut(0, 0));
+                                    let source = *capture_block.view(0, 0);
+                                    signal_delay_buffer.delay(&source, render_block.view_mut(0, 0));
                                     render_delay_buffer.insert(&render_block);
                                     render_delay_buffer.prepare_capture_processing();
                                     delay_blocks = controller.get_delay(
@@ -429,13 +421,14 @@ mod tests {
                                 for _ in 0..loops {
                                     let mut capture_block_buffer = Vec::new();
                                     for _ in 0..(MAX_TEST_JITTER_BLOCKS - 1) {
-                                        randomize_sample_vector(&mut rng, &mut render_block[0][0]);
+                                        randomize_sample_vector(
+                                            &mut rng,
+                                            render_block.view_mut(0, 0),
+                                        );
                                         {
-                                            let capture_ch0 = capture_block
-                                                .get_mut(0)
-                                                .expect("at least one capture channel");
+                                            let source = *render_block.view(0, 0);
                                             signal_delay_buffer
-                                                .delay(&render_block[0][0], capture_ch0);
+                                                .delay(&source, capture_block.view_mut(0, 0));
                                         }
                                         capture_block_buffer.push(capture_block.clone());
                                         render_delay_buffer.insert(&render_block);
@@ -463,20 +456,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    #[should_panic]
-    fn rejects_wrong_capture_block_size() {
-        let config = EchoCanceller3Config::default();
-        let rate = 48_000;
-        let render_delay_buffer = RenderDelayBuffer::new(config.clone(), rate, 1);
-        let mut controller = RenderDelayController::new(&config, rate, 1);
-        let capture = vec![vec![0.0f32; BLOCK_SIZE - 1]];
-        controller.get_delay(
-            render_delay_buffer.downsampled_render_buffer(),
-            render_delay_buffer.delay(),
-            &capture,
-        );
     }
 }

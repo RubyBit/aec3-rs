@@ -1,3 +1,4 @@
+use crate::audio_processing::aec3::block::Block;
 use crate::audio_processing::aec3::subtractor_output::SubtractorOutput;
 
 #[derive(Default)]
@@ -8,7 +9,7 @@ pub(super) struct SaturationDetector {
 impl SaturationDetector {
     pub(super) fn update(
         &mut self,
-        x: &[Vec<f32>],
+        x: &Block,
         saturated_capture: bool,
         usable_linear_estimate: bool,
         subtractor_output: &[SubtractorOutput],
@@ -31,7 +32,7 @@ impl SaturationDetector {
             }
         } else {
             let mut max_sample = 0.0f32;
-            for channel in x {
+            for channel in x.band_channels(0) {
                 for &sample in channel {
                     max_sample = max_sample.max(sample.abs());
                 }

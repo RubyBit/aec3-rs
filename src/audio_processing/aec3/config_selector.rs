@@ -5,9 +5,6 @@
 use crate::api::config::EchoCanceller3Config;
 
 /// Validates that the mono and the multichannel configs have compatible fields.
-///
-/// The reference additionally compares `filter.high_pass_filter_echo_reference`,
-/// which this crate does not implement.
 fn compatible_configs(
     mono_config: &EchoCanceller3Config,
     multichannel_config: &EchoCanceller3Config,
@@ -19,6 +16,11 @@ fn compatible_configs(
     }
     if mono_config.filter.export_linear_aec_output
         != multichannel_config.filter.export_linear_aec_output
+    {
+        return false;
+    }
+    if mono_config.filter.high_pass_filter_echo_reference
+        != multichannel_config.filter.high_pass_filter_echo_reference
     {
         return false;
     }

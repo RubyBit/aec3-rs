@@ -6,6 +6,7 @@ use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, Diagnosti
 use super::aec3_common::{
     BLOCK_SIZE, BLOCK_SIZE_LOG2, FFT_LENGTH_BY_2, NUM_BLOCKS_PER_SECOND, get_time_domain_length,
 };
+use super::block::Block;
 use super::render_buffer::RenderBuffer;
 
 pub struct FilterAnalyzer {
@@ -142,7 +143,7 @@ impl FilterAnalyzer {
             Self::update_filter_gain(self.bounded_erl, self.blocks_since_reset, h_hp, state);
             state.filter_length_blocks = filter.len() / BLOCK_SIZE;
             let block_offset = -(self.filter_delays_blocks[ch] as isize);
-            let render_block = &render_buffer.block(block_offset)[0];
+            let render_block = render_buffer.block(block_offset);
             state.consistent_estimate = state.consistent_filter_detector.detect(
                 h_hp,
                 &self.region,
@@ -282,7 +283,7 @@ mod tests {
     fn filter_analyzer_handles_filter_resize() {
         let config = EchoCanceller3Config::default();
         let mut analyzer = FilterAnalyzer::new(&config, 1);
-        let block_buffer = BlockBuffer::new(8, 1, 1, BLOCK_SIZE);
+        let block_buffer = BlockBuffer::new(8, 1, 1);
         let spectrum_buffer = SpectrumBuffer::new(8, 1);
         let fft_buffer = FftBuffer::new(8, 1);
         let render_buffer = RenderBuffer::new(&block_buffer, &spectrum_buffer, &fft_buffer, false);
@@ -343,7 +344,7 @@ impl ConsistentFilterDetector {
         &mut self,
         filter_to_analyze: &[f32],
         region: &FilterRegion,
-        x_block: &[Vec<f32>],
+        x_block: &Block,
         peak_index: usize,
         delay_blocks: i32,
     ) -> bool {
@@ -392,7 +393,7 @@ impl ConsistentFilterDetector {
 
         if self.significant_peak {
             let mut active_render_block = false;
-            for channel in x_block {
+            for channel in x_block.band_channels(0) {
                 let energy = channel.iter().map(|x| x * x).sum::<f32>();
                 if energy > self.active_render_threshold {
                     active_render_block = true;

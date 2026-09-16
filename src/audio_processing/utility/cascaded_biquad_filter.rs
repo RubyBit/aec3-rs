@@ -91,6 +91,13 @@ impl CascadedBiQuadFilter {
         Self { biquads }
     }
 
+    /// Builds a cascade in which every stage has its own coefficients, unlike
+    /// [`with_coefficients`](Self::with_coefficients) which repeats one stage.
+    pub fn from_coefficients(coefficients: &[BiQuadCoefficients]) -> Self {
+        let biquads = coefficients.iter().map(|c| BiQuad::new(*c)).collect();
+        Self { biquads }
+    }
+
     pub fn from_params(params: &[BiQuadParam]) -> Self {
         let biquads = params.iter().map(|p| BiQuad::from_param(*p)).collect();
         Self { biquads }

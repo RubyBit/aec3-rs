@@ -126,7 +126,7 @@ impl EchoAudibility {
     }
 
     fn is_render_too_low(&mut self, block_buffer: &BlockBuffer) -> bool {
-        let num_render_channels = block_buffer.buffer[0][0].len();
+        let num_render_channels = block_buffer.buffer[0].num_channels();
         let current = block_buffer.write;
         let mut too_low = false;
         if current == self.render_block_write_prev {
@@ -136,7 +136,7 @@ impl EchoAudibility {
             loop {
                 let mut max_abs_over_channels = 0.0f32;
                 for ch in 0..num_render_channels {
-                    let block = &block_buffer.buffer[idx][0][ch];
+                    let block = block_buffer.buffer[idx].view(0, ch);
                     let mut min_sample = f32::INFINITY;
                     let mut max_sample = f32::NEG_INFINITY;
                     for &sample in block {

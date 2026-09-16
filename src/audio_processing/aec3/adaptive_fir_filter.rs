@@ -1033,6 +1033,7 @@ mod tests {
         get_time_domain_length, num_bands_for_rate,
     };
     use crate::audio_processing::aec3::aec3_fft::{Aec3Fft, Window};
+    use crate::audio_processing::aec3::block::Block;
     use crate::audio_processing::aec3::block_buffer::BlockBuffer;
     use crate::audio_processing::aec3::delay_estimate::DelayEstimate;
     use crate::audio_processing::aec3::echo_path_variability::{
@@ -1103,7 +1104,7 @@ mod tests {
         const NUM_CHANNELS: usize = 2;
         const NUM_PARTITIONS: usize = 3;
 
-        let block_buffer = BlockBuffer::new(BUFFER_SIZE, 1, NUM_CHANNELS, BLOCK_SIZE);
+        let block_buffer = BlockBuffer::new(BUFFER_SIZE, 1, NUM_CHANNELS);
         let mut spectrum_buffer = SpectrumBuffer::new(BUFFER_SIZE, NUM_CHANNELS);
         let mut fft_buffer = FftBuffer::new(BUFFER_SIZE, NUM_CHANNELS);
         fft_buffer.read = 2;
@@ -1253,7 +1254,7 @@ mod tests {
                     config.filter.config_change_duration_blocks,
                 );
                 let mut random_generator = Random::new(42);
-                let mut x = vec![vec![vec![0.0f32; BLOCK_SIZE]; num_render_channels]; NUM_BANDS];
+                let mut x = Block::new(NUM_BANDS, num_render_channels);
                 let mut n = vec![0.0f32; BLOCK_SIZE];
                 let mut y = vec![0.0f32; BLOCK_SIZE];
                 let mut aec_state =
@@ -1287,9 +1288,9 @@ mod tests {
                     for j in 0..num_blocks_to_process {
                         y.fill(0.0);
                         for ch in 0..num_render_channels {
-                            randomize_sample_vector(&mut random_generator, &mut x[0][ch]);
+                            randomize_sample_vector(&mut random_generator, x.view_mut(0, ch));
                             let delayed = &mut delayed_samples[ch];
-                            delay_buffer[ch].delay(&x[0][ch], delayed);
+                            delay_buffer[ch].delay(x.view(0, ch), delayed);
                             for k in 0..BLOCK_SIZE {
                                 y[k] += delayed[k] / num_render_channels as f32;
                             }
@@ -1302,7 +1303,7 @@ mod tests {
                         }
 
                         for ch in 0..num_render_channels {
-                            x_hp_filter[ch].process_in_place(&mut x[0][ch]);
+                            x_hp_filter[ch].process_in_place(x.view_mut(0, ch));
                         }
                         y_hp_filter.process_in_place(&mut y);
 

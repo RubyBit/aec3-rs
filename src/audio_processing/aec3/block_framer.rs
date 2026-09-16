@@ -1,4 +1,5 @@
 use crate::audio_processing::aec3::aec3_common::{BLOCK_SIZE, SUB_FRAME_LENGTH};
+use crate::audio_processing::aec3::block::Block;
 
 /// Reconstructs 80-sample subframes from 64-sample multiband blocks.
 pub struct BlockFramer {
@@ -27,45 +28,44 @@ impl BlockFramer {
         }
     }
 
-    pub fn insert_block(&mut self, block: &[Vec<Vec<f32>>]) {
-        assert_eq!(self.num_bands, block.len());
+    pub fn insert_block(&mut self, block: &Block) {
+        assert_eq!(self.num_bands, block.num_bands());
+        assert_eq!(self.num_channels, block.num_channels());
         for band in 0..self.num_bands {
-            assert_eq!(self.num_channels, block[band].len());
             for channel in 0..self.num_channels {
-                assert_eq!(BLOCK_SIZE, block[band][channel].len());
                 let buffered = &mut self.buffer[band][channel];
                 assert!(buffered.is_empty());
-                buffered.extend_from_slice(&block[band][channel]);
+                buffered.extend_from_slice(block.view(band, channel));
             }
         }
     }
 
     pub fn insert_block_and_extract_sub_frame(
         &mut self,
-        block: &[Vec<Vec<f32>>],
+        block: &Block,
         sub_frame: &mut [Vec<Vec<f32>>],
     ) {
-        assert_eq!(self.num_bands, block.len());
+        assert_eq!(self.num_bands, block.num_bands());
+        assert_eq!(self.num_channels, block.num_channels());
         assert_eq!(self.num_bands, sub_frame.len());
         for band in 0..self.num_bands {
-            assert_eq!(self.num_channels, block[band].len());
             assert_eq!(self.num_channels, sub_frame[band].len());
             for channel in 0..self.num_channels {
                 let buffered = &mut self.buffer[band][channel];
                 assert!(buffered.len() + BLOCK_SIZE >= SUB_FRAME_LENGTH);
                 assert!(buffered.len() <= BLOCK_SIZE);
-                assert_eq!(BLOCK_SIZE, block[band][channel].len());
                 assert_eq!(SUB_FRAME_LENGTH, sub_frame[band][channel].len());
 
                 let samples_to_frame = SUB_FRAME_LENGTH - buffered.len();
                 assert!(samples_to_frame <= BLOCK_SIZE);
 
+                let source = block.view(band, channel);
                 sub_frame[band][channel][..buffered.len()].copy_from_slice(buffered);
                 sub_frame[band][channel][buffered.len()..SUB_FRAME_LENGTH]
-                    .copy_from_slice(&block[band][channel][..samples_to_frame]);
+                    .copy_from_slice(&source[..samples_to_frame]);
 
                 buffered.clear();
-                buffered.extend_from_slice(&block[band][channel][samples_to_frame..]);
+                buffered.extend_from_slice(&source[samples_to_frame..]);
             }
         }
     }
@@ -102,10 +102,12 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
-    fn fill_block(block_counter: usize, block: &mut [Vec<Vec<f32>>]) {
-        for (band_idx, band) in block.iter_mut().enumerate() {
-            for (channel_idx, channel) in band.iter_mut().enumerate() {
-                for (sample_idx, sample) in channel.iter_mut().enumerate() {
+    fn fill_block(block_counter: usize, block: &mut Block) {
+        for band_idx in 0..block.num_bands() {
+            for channel_idx in 0..block.num_channels() {
+                for (sample_idx, sample) in
+                    block.view_mut(band_idx, channel_idx).iter_mut().enumerate()
+                {
                     *sample = compute_sample_value(
                         block_counter,
                         BLOCK_SIZE,
@@ -143,7 +145,7 @@ mod tests {
     fn run_framer_test(sample_rate_hz: i32, num_channels: usize) {
         const NUM_SUB_FRAMES: usize = 10;
         let num_bands = num_bands_for_rate(sample_rate_hz);
-        let mut block = make_tensor(num_bands, num_channels, BLOCK_SIZE);
+        let mut block = Block::new(num_bands, num_channels);
         let mut sub_frame = make_tensor(num_bands, num_channels, SUB_FRAME_LENGTH);
         let mut framer = BlockFramer::new(num_bands, num_channels);
 
@@ -175,18 +177,9 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn insert_block_and_extract_panics_on_wrong_block_length() {
-        let mut framer = BlockFramer::new(1, 1);
-        let block = make_tensor(1, 1, BLOCK_SIZE - 1);
-        let mut sub_frame = make_tensor(1, 1, SUB_FRAME_LENGTH);
-        framer.insert_block_and_extract_sub_frame(&block, &mut sub_frame);
-    }
-
-    #[test]
-    #[should_panic]
     fn insert_block_and_extract_panics_on_wrong_sub_frame_length() {
         let mut framer = BlockFramer::new(1, 1);
-        let block = make_tensor(1, 1, BLOCK_SIZE);
+        let block = Block::new(1, 1);
         let mut sub_frame = make_tensor(1, 1, SUB_FRAME_LENGTH - 1);
         framer.insert_block_and_extract_sub_frame(&block, &mut sub_frame);
     }
@@ -195,7 +188,7 @@ mod tests {
     #[should_panic]
     fn insert_block_panics_when_buffer_not_empty() {
         let mut framer = BlockFramer::new(1, 1);
-        let block = make_tensor(1, 1, BLOCK_SIZE);
+        let block = Block::new(1, 1);
         let mut sub_frame = make_tensor(1, 1, SUB_FRAME_LENGTH);
         // Need four extract calls to drain the initial buffer.
         for _ in 0..4 {

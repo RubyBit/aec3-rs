@@ -39,6 +39,11 @@ impl MatchedFilterLagAggregator {
         }
     }
 
+    /// Whether a delay candidate has been seen often enough to be trusted.
+    pub fn reliable_delay_found(&self) -> bool {
+        self.significant_candidate_found
+    }
+
     pub fn aggregate(&mut self, lag_estimates: &[LagEstimate]) -> Option<DelayEstimate> {
         let mut best_accuracy = 0.0f32;
         let mut best_lag_index: Option<usize> = None;

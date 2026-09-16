@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `audio_processing::post_filter::PostFilter`, ported from WebRTC's
+  `post_filter.{h,cc}`. A 4-section Chebyshev type 2 low-pass that removes
+  content above 19.5 kHz. `create_if_needed` returns `None` below 48 kHz.
+- `nodes::post_filter`, the corresponding graph node. Pass-through below 48 kHz.
+- `pipelines::linear::LinearPipelineBuilder::enable_post_filter` (`true`),
+  `LinearPipeline::reset_post_filter`, and `LinearPipelineHandles::post_filter`.
+- `CascadedBiQuadFilter::from_coefficients`, for cascades whose stages have
+  different coefficients.
+- `audio_processing::aec3::block::Block`, a contiguous multiband, multichannel
+  block, ported from WebRTC's `block.h`.
+- `EchoCanceller3::set_capture_output_usage`, also on the `EchoControl` trait
+  (default no-op) and on `BlockProcessor`/`EchoRemover`. When the capture output
+  is unused, the residual echo estimate, suppression gain and suppression filter
+  are skipped and the capture block passes through untouched; the linear filter
+  keeps adapting. Ported from WebRTC's `SetCaptureOutputUsage`.
+- `nodes::aec3` gains a `capture_output_used_in` control port, matching the port
+  `nodes::agc2` already has.
+- Config fields the reference exposes but this crate hardcoded or omitted:
+  `delay.delay_estimate_smoothing_delay_found` (`0.7`),
+  `filter.high_pass_filter_echo_reference` (`false`), a `comfort_noise` section
+  with `noise_floor_dbfs` (`-96.03406`), and on `suppressor`:
+  `lf_smoothing_during_initial_phase` (`true`),
+  `last_permanent_lf_smoothing_band` (`0`), `last_lf_smoothing_band` (`5`),
+  `last_lf_band` (`5`), `first_hf_band` (`8`). All default to the reference
+  values and `validate` clamps them to the reference ranges.
+
+### Fixed
+- The render reference was always high-pass filtered on its way to the block
+  processor. The reference only does this when
+  `filter.high_pass_filter_echo_reference` is set, which is off by default, so
+  low frequencies were removed from the echo reference but not from capture.
+  Two unit tests had been written against the old behaviour.
+- Comfort noise is now estimated from the linear filter output spectrum when the
+  linear estimate is usable, as the reference does; it was always estimated from
+  the microphone spectrum, which still contains the echo and biases the noise
+  floor high. The nearend spectrum selection also now happens before the AEC
+  state update, matching the reference.
+- Behaviour: low-frequency gain smoothing in the suppressor now also covers
+  bands at or below `suppressor.last_permanent_lf_smoothing_band` when echo
+  exceeds nearend. With the default of `0`, band 0 is now smoothed in that case.
+
+### Changed
+- Behaviour: `pipelines::linear` applies the fullband post filter by default, as
+  the reference does. At 48 kHz this attenuates content above 19.5 kHz; lower
+  rates are unaffected. Opt out with `enable_post_filter(false)`.
+- `MatchedFilter::new` takes a second smoothing value and `update` takes a
+  `use_slow_smoothing` flag, so the delay estimator can switch to
+  `delay.delay_estimate_smoothing_delay_found` once
+  `MatchedFilterLagAggregator::reliable_delay_found` (now public) reports a
+  reliable delay. Both values default to `0.7`.
+- `ComfortNoiseGenerator::new` takes the noise floor in dBFS. The previously
+  hardcoded floor equals the default.
+- AEC3 passes 64-sample blocks as `Block` instead of `Vec<Vec<Vec<f32>>>`, so a
+  block is one allocation rather than one per band plus one per channel per band.
+  This changes the signatures of `EchoCanceller3`'s block path: `BlockProcessor`,
+  `EchoRemover`, `RenderDelayBuffer`, `RenderDelayController`,
+  `EchoPathDelayEstimator`, `Subtractor`, `SuppressionGain`, `SuppressionFilter`,
+  `AlignmentMixer`, `FrameBlocker`, `BlockFramer`, `BlockBuffer` and
+  `RenderBuffer::block`. Frames and subframes are unchanged, as upstream.
+- `BlockBuffer::new` no longer takes a frame length; a block is always
+  `BLOCK_SIZE` samples.
+
+### Removed
+- Four `#[should_panic]` tests that asserted a wrongly sized block is rejected at
+  runtime. `Block` makes the size structural, so those inputs cannot be
+  constructed.
+
 ## [0.3.2] - 2026-08-12
 
 ### Added
