@@ -27,8 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nodes::agc2` already has.
 - `AecState::erle_unbounded` and `ErleEstimator::erle_unbounded`, the ERLE
   without the `erle.max_l`/`erle.max_h` cap.
+- SSE2/AVX2/NEON cores for the pre-echo accumulated error, so enabling
+  `delay.detect_pre_echo` costs essentially nothing. On an Apple M-series core
+  the matched filter went from 22.6 to 13.0 us per 4 ms block with detection on,
+  against 12.8 us with it off.
+- Pre-echo detection, behind `delay.detect_pre_echo` (`true`). The matched
+  filter tracks the error of the filter truncated at every fourth tap and, once
+  it has 50 updates, reports the earliest reflection that already explains the
+  capture signal. `MatchedFilterLagAggregator` histograms that lag and reports
+  it as the delay, so an early weak reflection followed by a stronger one aligns
+  to the early one and stays inside the filter window.
 - Config fields that were previously hardcoded or absent, all validated and
-  clamped: `delay.delay_estimate_smoothing_delay_found` (`0.7`),
+  clamped: `delay.detect_pre_echo` (`true`),
+  `delay.delay_estimate_smoothing_delay_found` (`0.7`),
   `filter.high_pass_filter_echo_reference` (`false`), a `comfort_noise` section
   with `noise_floor_dbfs` (`-96.03406`), `ep_strength.nearend_len` (`0.83`),
   `ep_strength.erle_onset_compensation_in_dominant_nearend` (`false`), and on
@@ -90,6 +101,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uncapped residual echo spectrum; `SuppressionGain::get_gain` takes it too.
 - `ReverbDecayEstimator::decay`, `ReverbModelEstimator::reverb_decay` and
   `AecState::reverb_decay` take a `mild` flag.
+- `MatchedFilter` selects the winning filter itself and reports a single
+  `LagEstimate { lag, pre_echo_lag }` through `best_lag_estimate`, replacing the
+  per-filter `lag_estimates` slice and its `accuracy`/`reliable`/`updated`
+  fields. `MatchedFilter::reset` takes a `full_reset` flag.
+- `MatchedFilterLagAggregator::new` takes the whole `Delay` config, and
+  `aggregate` takes `Option<LagEstimate>`. `get_delay_at_highest_peak` is
+  exposed as `delay_at_highest_peak`.
+- The delay headroom is subtracted in `MatchedFilterLagAggregator`, in
+  downsampled units, instead of in `compute_buffer_delay` at full rate. The two
+  agree whenever `delay.delay_headroom_samples` divides by
+  `delay.down_sampling_factor`, which holds for the defaults.
 
 ### Removed
 - `AecState::erle_uncertainty` and the residual echo estimator branch using it.
@@ -98,6 +120,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Four `#[should_panic]` tests that asserted a wrongly sized block is rejected at
   runtime. `Block` makes the size structural, so those inputs cannot be
   constructed.
+- The matched filter test asserting one lag estimate per configured filter, and
+  the lag aggregator test selecting the most accurate of several estimates. The
+  matched filter now picks the winner itself, so neither has anything to check.
 
 ## [0.3.2] - 2026-08-12
 

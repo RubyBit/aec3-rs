@@ -15,7 +15,6 @@ use crate::audio_processing::logging::apm_data_dumper::{ApmDataDumper, Diagnosti
 pub struct RenderDelayController {
     data_dumper: ApmDataDumper,
     hysteresis_limit_blocks: usize,
-    delay_headroom_samples: usize,
     delay: Option<DelayEstimate>,
     delay_estimator: EchoPathDelayEstimator,
     metrics: RenderDelayControllerMetrics,
@@ -39,7 +38,6 @@ impl RenderDelayController {
         Self {
             data_dumper,
             hysteresis_limit_blocks: config.delay.hysteresis_limit_blocks,
-            delay_headroom_samples: config.delay.delay_headroom_samples,
             delay: None,
             delay_estimator,
             metrics: RenderDelayControllerMetrics::new(),
@@ -114,12 +112,7 @@ impl RenderDelayController {
             } else {
                 0
             };
-            let new_delay = compute_buffer_delay(
-                self.delay.as_ref(),
-                hysteresis,
-                self.delay_headroom_samples,
-                delay_samples,
-            );
+            let new_delay = compute_buffer_delay(self.delay.as_ref(), hysteresis, delay_samples);
             self.delay = Some(new_delay);
             self.last_delay_estimate_quality = delay_samples.quality;
         }
@@ -152,14 +145,14 @@ impl RenderDelayController {
     }
 }
 
+/// The delay headroom is already subtracted by `MatchedFilterLagAggregator`, in
+/// downsampled units.
 fn compute_buffer_delay(
     current_delay: Option<&DelayEstimate>,
     hysteresis_limit_blocks: usize,
-    delay_headroom_samples: usize,
     mut estimated_delay: DelayEstimate,
 ) -> DelayEstimate {
-    let delay_with_headroom = estimated_delay.delay.saturating_sub(delay_headroom_samples);
-    let mut new_delay_blocks = delay_with_headroom >> BLOCK_SIZE_LOG2;
+    let mut new_delay_blocks = estimated_delay.delay >> BLOCK_SIZE_LOG2;
 
     if let Some(current) = current_delay {
         if new_delay_blocks > current.delay

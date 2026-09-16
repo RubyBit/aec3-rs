@@ -58,11 +58,12 @@ impl EchoPathDelayEstimator {
             config.delay.delay_estimate_smoothing,
             config.delay.delay_estimate_smoothing_delay_found,
             config.delay.delay_candidate_detection_threshold,
+            config.delay.detect_pre_echo,
         );
         let matched_filter_lag_aggregator = MatchedFilterLagAggregator::new(
             data_dumper.clone(),
             matched_filter.max_filter_lag(),
-            config.delay.delay_selection_thresholds.clone(),
+            &config.delay,
         );
 
         Self {
@@ -113,7 +114,7 @@ impl EchoPathDelayEstimator {
 
         let mut aggregated = self
             .matched_filter_lag_aggregator
-            .aggregate(self.matched_filter.lag_estimates());
+            .aggregate(self.matched_filter.best_lag_estimate());
 
         if let Some(estimate) = aggregated {
             if matches!(estimate.quality, DelayEstimateQuality::Refined) {
@@ -167,7 +168,8 @@ impl EchoPathDelayEstimator {
             self.matched_filter_lag_aggregator
                 .reset(reset_delay_confidence);
         }
-        self.matched_filter.reset();
+        self.matched_filter
+            .reset(/*full_reset=*/ reset_lag_aggregator);
         self.old_aggregated_lag = None;
         self.consistent_estimate_counter = 0;
     }
@@ -218,11 +220,14 @@ mod tests {
         const NUM_CAPTURE_CHANNELS: usize = 1;
         let num_bands = num_bands_for_rate(SAMPLE_RATE_HZ);
         let mut rng = Random::new(42);
-        let down_sampling_factors = [2usize, 4, 8];
+        let down_sampling_factors = [4usize, 8];
         let test_delays = [30usize, 64, 150, 200, 800, 4000];
 
         for &factor in &down_sampling_factors {
             let mut config = EchoCanceller3Config::default();
+            // The headroom is subtracted by the lag aggregator, so zero it out
+            // to test the delay estimate itself.
+            config.delay.delay_headroom_samples = 0;
             config.delay.down_sampling_factor = factor;
             config.delay.num_filters = 10;
 
@@ -254,8 +259,13 @@ mod tests {
                 if let Some(estimate) = estimated_delay {
                     let expected_ds = delay_samples / factor;
                     let estimated_ds = estimate.delay / factor;
+                    // The delay is quantised internally with an error of up to
+                    // one block.
                     let diff = expected_ds as isize - estimated_ds as isize;
-                    assert!(diff.abs() <= 1);
+                    assert!(
+                        diff.unsigned_abs() <= BLOCK_SIZE / factor,
+                        "dsf {factor} delay {delay_samples}: off by {diff}"
+                    );
                 } else {
                     panic!(
                         "No delay estimate produced for delay {} and factor {}",

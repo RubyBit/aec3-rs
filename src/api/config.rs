@@ -400,6 +400,9 @@ pub struct Delay {
     pub log_warning_on_delay_changes: bool,
     pub render_alignment_mixing: AlignmentMixing,
     pub capture_alignment_mixing: AlignmentMixing,
+    /// Detects an early reflection preceding the strongest one and aligns to it
+    /// instead, so the early part of the echo stays inside the filter window.
+    pub detect_pre_echo: bool,
 }
 
 impl Default for Delay {
@@ -432,6 +435,7 @@ impl Default for Delay {
                 activity_power_threshold: 10_000.0,
                 prefer_first_two_channels: false,
             },
+            detect_pre_echo: true,
         }
     }
 }
@@ -968,6 +972,7 @@ mod tests {
         assert_eq!(5, config.suppressor.last_lf_smoothing_band);
         assert_eq!(5, config.suppressor.last_lf_band);
         assert_eq!(8, config.suppressor.first_hf_band);
+        assert!(config.delay.detect_pre_echo);
         assert_eq!(0.83, config.ep_strength.nearend_len);
         assert!(
             !config
