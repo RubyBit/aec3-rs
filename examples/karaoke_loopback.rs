@@ -58,10 +58,11 @@ fn main() -> Result<()> {
         .expect("no output device available");
 
     let loopback_supported = output_device.default_output_config()?;
-    let loopback_stream_config: cpal::StreamConfig = loopback_supported.clone().into();
+    let mut loopback_stream_config: cpal::StreamConfig = loopback_supported.clone().into();
     let sample_rate_hz = loopback_stream_config.sample_rate;
     let channels = loopback_stream_config.channels;
     let frames_per_buffer = (sample_rate_hz / 100) as usize;
+    loopback_stream_config.buffer_size = cpal::BufferSize::Fixed(frames_per_buffer as u32);
 
     let (tx_capture, rx_capture) = bounded::<Vec<f32>>(16);
     let (tx_render, rx_render) = bounded::<Vec<f32>>(16);
