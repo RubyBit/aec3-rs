@@ -28,16 +28,20 @@ impl ResidualEchoEstimator {
         instance
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn estimate(
         &mut self,
         aec_state: &AecState,
         render_buffer: &RenderBuffer<'_>,
         s2_linear: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         y2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
+        dominant_nearend: bool,
         r2: &mut [[f32; FFT_LENGTH_BY_2_PLUS_1]],
+        r2_unbounded: &mut [[f32; FFT_LENGTH_BY_2_PLUS_1]],
     ) {
         assert_eq!(r2.len(), y2.len());
         assert_eq!(r2.len(), s2_linear.len());
+        assert_eq!(r2.len(), r2_unbounded.len());
         let num_capture_channels = r2.len();
 
         self.update_render_noise_power(render_buffer);
@@ -45,18 +49,31 @@ impl ResidualEchoEstimator {
         if aec_state.usable_linear_estimate() {
             if aec_state.saturated_echo() {
                 copy_power_spectra(y2, r2);
-            } else if let Some(erle_uncertainty) = aec_state.erle_uncertainty() {
-                linear_estimate_with_uncertainty(s2_linear, erle_uncertainty, r2);
+                copy_power_spectra(y2, r2_unbounded);
             } else {
-                linear_estimate_with_erle(s2_linear, aec_state.erle(), r2);
+                let onset_compensated = self
+                    .config
+                    .ep_strength
+                    .erle_onset_compensation_in_dominant_nearend
+                    || !dominant_nearend;
+                linear_estimate_with_erle(s2_linear, aec_state.erle(onset_compensated), r2);
+                linear_estimate_with_erle(s2_linear, aec_state.erle_unbounded(), r2_unbounded);
             }
 
-            self.add_reverb(ReverbType::Linear, aec_state, render_buffer, r2);
+            self.update_reverb(
+                ReverbType::Linear,
+                aec_state,
+                render_buffer,
+                dominant_nearend,
+            );
+            add_reverb(self.echo_reverb.reverb(), r2);
+            add_reverb(self.echo_reverb.reverb(), r2_unbounded);
         } else {
             let echo_path_gain = get_echo_path_gain(aec_state, &self.config.ep_strength);
 
             if aec_state.saturated_echo() {
                 copy_power_spectra(y2, r2);
+                copy_power_spectra(y2, r2_unbounded);
             } else {
                 let mut x2 = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
                 echo_generating_power(
@@ -76,12 +93,20 @@ impl ResidualEchoEstimator {
                     }
                 }
                 non_linear_estimate(echo_path_gain, &x2, r2);
+                non_linear_estimate(echo_path_gain, &x2, r2_unbounded);
             }
 
             if self.config.echo_model.model_reverb_in_nonlinear_mode
                 && !aec_state.transparent_mode()
             {
-                self.add_reverb(ReverbType::NonLinear, aec_state, render_buffer, r2);
+                self.update_reverb(
+                    ReverbType::NonLinear,
+                    aec_state,
+                    render_buffer,
+                    dominant_nearend,
+                );
+                add_reverb(self.echo_reverb.reverb(), r2);
+                add_reverb(self.echo_reverb.reverb(), r2_unbounded);
             }
         }
 
@@ -91,6 +116,7 @@ impl ResidualEchoEstimator {
             for ch in 0..num_capture_channels {
                 for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
                     r2[ch][k] *= residual_scaling[k];
+                    r2_unbounded[ch][k] *= residual_scaling[k];
                 }
             }
         }
@@ -133,14 +159,16 @@ impl ResidualEchoEstimator {
         }
     }
 
-    fn add_reverb(
+    /// Updates the reverb model. Split from [`add_reverb`] because the model is
+    /// updated once per block but added to both the bounded and unbounded
+    /// residual echo spectra.
+    fn update_reverb(
         &mut self,
         reverb_type: ReverbType,
         aec_state: &AecState,
         render_buffer: &RenderBuffer<'_>,
-        r2: &mut [[f32; FFT_LENGTH_BY_2_PLUS_1]],
+        dominant_nearend: bool,
     ) {
-        let num_capture_channels = r2.len();
         let first_reverb_partition = match reverb_type {
             ReverbType::Linear => (aec_state.filter_length_blocks() + 1) as isize,
             ReverbType::NonLinear => (aec_state.min_direct_path_filter_delay() + 1) as isize,
@@ -161,26 +189,31 @@ impl ResidualEchoEstimator {
             &spectra[0]
         };
 
+        let reverb_decay = aec_state.reverb_decay(/*mild=*/ dominant_nearend);
         if matches!(reverb_type, ReverbType::Linear) {
             self.echo_reverb.update_reverb(
                 render_power,
                 aec_state.get_reverb_frequency_response(),
-                aec_state.reverb_decay(),
+                reverb_decay,
             );
         } else {
             let echo_path_gain = get_echo_path_gain(aec_state, &self.config.ep_strength);
             self.echo_reverb.update_reverb_no_freq_shaping(
                 render_power,
                 echo_path_gain,
-                aec_state.reverb_decay(),
+                reverb_decay,
             );
         }
+    }
+}
 
-        let reverb_power = self.echo_reverb.reverb();
-        for ch in 0..num_capture_channels {
-            for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
-                r2[ch][k] += reverb_power[k];
-            }
+fn add_reverb(
+    reverb_power: &[f32; FFT_LENGTH_BY_2_PLUS_1],
+    r2: &mut [[f32; FFT_LENGTH_BY_2_PLUS_1]],
+) {
+    for channel in r2.iter_mut() {
+        for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
+            channel[k] += reverb_power[k];
         }
     }
 }
@@ -213,18 +246,6 @@ fn linear_estimate_with_erle(
             } else {
                 0.0
             };
-        }
-    }
-}
-
-fn linear_estimate_with_uncertainty(
-    s2_linear: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
-    erle_uncertainty: f32,
-    r2: &mut [[f32; FFT_LENGTH_BY_2_PLUS_1]],
-) {
-    for ch in 0..r2.len() {
-        for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
-            r2[ch][k] = s2_linear[ch][k] * erle_uncertainty;
         }
     }
 }
@@ -356,6 +377,7 @@ mod tests {
                 let mut s2_linear = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels];
                 let mut y2 = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels];
                 let mut r2 = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels];
+                let mut r2_unbounded = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels];
                 let delay_estimate: Option<DelayEstimate> = None;
 
                 const LEVEL: f32 = 10.0;
@@ -384,7 +406,15 @@ mod tests {
                         &outputs,
                     );
 
-                    estimator.estimate(&aec_state, &render_buffer, &s2_linear, &y2, &mut r2);
+                    estimator.estimate(
+                        &aec_state,
+                        &render_buffer,
+                        &s2_linear,
+                        &y2,
+                        /*dominant_nearend=*/ false,
+                        &mut r2,
+                        &mut r2_unbounded,
+                    );
                 }
             }
         }

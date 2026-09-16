@@ -61,6 +61,7 @@ pub struct EchoRemover {
     y2: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
     e2: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
     r2: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    r2_unbounded: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
     s2_linear: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
     comfort_noise: Vec<FftData>,
     high_band_comfort_noise: Vec<FftData>,
@@ -138,6 +139,7 @@ impl EchoRemover {
             y2: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
             e2: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
             r2: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
+            r2_unbounded: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
             s2_linear: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
             comfort_noise: vec![FftData::default(); num_capture_channels],
             high_band_comfort_noise: vec![FftData::default(); num_capture_channels],
@@ -320,7 +322,9 @@ impl EchoRemover {
                 render_buffer,
                 &self.s2_linear,
                 &self.y2,
+                self.suppression_gain.is_dominant_nearend(),
                 &mut self.r2,
+                &mut self.r2_unbounded,
             );
 
             if self.aec_state.usable_linear_estimate() {
@@ -354,6 +358,7 @@ impl EchoRemover {
                 nearend_spectrum,
                 echo_spectrum,
                 &self.r2,
+                &self.r2_unbounded,
                 self.cng.noise_spectrum(),
                 &self.render_signal_analyzer,
                 &self.aec_state,

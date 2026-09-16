@@ -84,7 +84,10 @@ impl ErleEstimator {
                 avg_render_spectrum_with_reverb,
                 capture_spectra,
                 subtractor_spectra,
-                self.subband_erle_estimator.erle(),
+                self.subband_erle_estimator
+                    .erle(/*onset_compensated=*/ false),
+                self.subband_erle_estimator
+                    .erle(/*onset_compensated=*/ true),
                 converged_filters,
             );
         }
@@ -97,11 +100,21 @@ impl ErleEstimator {
         );
     }
 
-    pub fn erle(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
+    pub fn erle(&self, onset_compensated: bool) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
         if let Some(signal_dependent) = &self.signal_dependent_erle_estimator {
-            signal_dependent.erle()
+            signal_dependent.erle(onset_compensated)
         } else {
-            self.subband_erle_estimator.erle()
+            self.subband_erle_estimator.erle(onset_compensated)
+        }
+    }
+
+    /// The uncapped ERLE. Only the subband estimator produces one; with the
+    /// signal-dependent estimator the capped ERLE is returned, as upstream.
+    pub fn erle_unbounded(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
+        if let Some(signal_dependent) = &self.signal_dependent_erle_estimator {
+            signal_dependent.erle(/*onset_compensated=*/ false)
+        } else {
+            self.subband_erle_estimator.erle_unbounded()
         }
     }
 
@@ -227,6 +240,18 @@ mod tests {
         }
     }
 
+    /// Asserts `erle1 >= erle2` band by band.
+    fn verify_erle_greater_or_equal(
+        erle1: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
+        erle2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
+    ) {
+        for (a, b) in erle1.iter().zip(erle2.iter()) {
+            for k in 0..FFT_LENGTH_BY_2_PLUS_1 {
+                assert!(a[k] >= b[k], "band {k}: {} < {}", a[k], b[k]);
+            }
+        }
+    }
+
     fn fullband_erle(fullband_log2: f32) -> f32 {
         2.0_f32.powf(fullband_log2)
     }
@@ -282,7 +307,19 @@ mod tests {
                     );
                 }
 
-                verify_erle_bands(estimator.erle(), config.erle.max_l, config.erle.max_h);
+                verify_erle_bands(
+                    estimator.erle(/*onset_compensated=*/ true),
+                    config.erle.max_l,
+                    config.erle.max_h,
+                );
+                verify_erle_greater_or_equal(
+                    estimator.erle(/*onset_compensated=*/ false),
+                    estimator.erle(/*onset_compensated=*/ true),
+                );
+                verify_erle_greater_or_equal(
+                    estimator.erle_unbounded(),
+                    estimator.erle(/*onset_compensated=*/ false),
+                );
                 assert!(fullband_erle(estimator.fullband_erle_log2()) > config.erle.max_l);
 
                 form_nearend_frame(&mut x, &mut x2, &mut e2, &mut y2);
@@ -299,7 +336,11 @@ mod tests {
                         &converged_filters,
                     );
                 }
-                verify_erle_bands(estimator.erle(), config.erle.max_l, config.erle.max_h);
+                verify_erle_bands(
+                    estimator.erle(/*onset_compensated=*/ false),
+                    config.erle.max_l,
+                    config.erle.max_h,
+                );
                 assert!(fullband_erle(estimator.fullband_erle_log2()) > config.erle.max_l);
             }
         }
@@ -407,7 +448,11 @@ mod tests {
                         &converged_filters,
                     );
                 }
-                verify_erle_bands(estimator.erle(), config.erle.min, config.erle.min);
+                verify_erle_bands(
+                    estimator.erle(/*onset_compensated=*/ true),
+                    config.erle.min,
+                    config.erle.min,
+                );
                 assert!(fullband_erle(estimator.fullband_erle_log2()) >= config.erle.min);
             }
         }

@@ -127,7 +127,9 @@ pub struct SignalDependentErleEstimator {
     band_to_subband: [usize; FFT_LENGTH_BY_2_PLUS_1],
     max_erle: [f32; SUBBANDS],
     section_boundaries_blocks: Vec<usize>,
+    use_onset_detection: bool,
     erle: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    erle_onset_compensated: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
     s2_section_accum: Vec<Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>>,
     erle_estimators: Vec<Vec<[f32; SUBBANDS]>>,
     erle_ref: Vec<[f32; SUBBANDS]>,
@@ -152,7 +154,9 @@ impl SignalDependentErleEstimator {
                 config.filter.main.length_blocks,
                 num_sections,
             ),
+            use_onset_detection: config.erle.onset_detection,
             erle: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
+            erle_onset_compensated: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
             s2_section_accum: vec![
                 vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_sections];
                 num_capture_channels
@@ -170,6 +174,7 @@ impl SignalDependentErleEstimator {
     pub fn reset(&mut self) {
         for ch in 0..self.erle.len() {
             self.erle[ch].fill(self.min_erle);
+            self.erle_onset_compensated[ch].fill(self.min_erle);
             for estimator in &mut self.erle_estimators[ch] {
                 estimator.fill(self.min_erle);
             }
@@ -182,8 +187,12 @@ impl SignalDependentErleEstimator {
         }
     }
 
-    pub fn erle(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
-        &self.erle
+    pub fn erle(&self, onset_compensated: bool) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
+        if onset_compensated && self.use_onset_detection {
+            &self.erle_onset_compensated
+        } else {
+            &self.erle
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -195,6 +204,7 @@ impl SignalDependentErleEstimator {
         y2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         e2: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         average_erle: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
+        average_erle_onset_compensated: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         converged_filters: &[bool],
     ) {
         if self.num_sections <= 1 {
@@ -214,8 +224,15 @@ impl SignalDependentErleEstimator {
                 let correction = self.correction_factors[ch][section_idx][subband];
                 self.erle[ch][k] =
                     (average_erle[ch][k] * correction).clamp(self.min_erle, self.max_erle[subband]);
+                if self.use_onset_detection {
+                    self.erle_onset_compensated[ch][k] = (average_erle_onset_compensated[ch][k]
+                        * correction)
+                        .clamp(self.min_erle, self.max_erle[subband]);
+                }
             }
             self.erle[ch][FFT_LENGTH_BY_2] = self.erle[ch][FFT_LENGTH_BY_2 - 1];
+            self.erle_onset_compensated[ch][FFT_LENGTH_BY_2] =
+                self.erle_onset_compensated[ch][FFT_LENGTH_BY_2 - 1];
         }
     }
 
@@ -578,6 +595,7 @@ mod tests {
                                         inputs.y2(),
                                         inputs.e2(),
                                         &average_erle,
+                                        &average_erle,
                                         inputs.converged_filters(),
                                     );
                                 }
@@ -618,6 +636,7 @@ mod tests {
                         inputs.x2(),
                         inputs.y2(),
                         inputs.e2(),
+                        &average_erle,
                         &average_erle,
                         inputs.converged_filters(),
                     );

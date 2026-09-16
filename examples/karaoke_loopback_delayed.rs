@@ -33,6 +33,7 @@ fn processing_thread(
                 hold_duration: 150,
                 trigger_threshold: 6,
                 use_during_initial_phase: true,
+                use_unbounded_echo_spectrum: true,
             },
             ..Suppressor::default()
         },

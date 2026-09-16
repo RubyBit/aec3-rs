@@ -23,6 +23,7 @@ pub struct ReverbDecayEstimator {
     estimation_region_identified: bool,
     previous_gains: Vec<f32>,
     decay: f32,
+    mild_decay: f32,
     tail_gain: f32,
     smoothing_constant: f32,
 }
@@ -46,6 +47,7 @@ impl ReverbDecayEstimator {
             estimation_region_identified: false,
             previous_gains: vec![0.0; filter_length_blocks],
             decay: config.ep_strength.default_len.abs(),
+            mild_decay: config.ep_strength.nearend_len.abs(),
             tail_gain: 0.0,
             smoothing_constant: 0.0,
         }
@@ -95,8 +97,16 @@ impl ReverbDecayEstimator {
         }
     }
 
-    pub fn decay(&self) -> f32 {
-        self.decay
+    /// `mild` selects the milder decay, which is used while the dominant
+    /// nearend state is active. Adaptive decay ignores it.
+    pub fn decay(&self, mild: bool) -> f32 {
+        if self.use_adaptive_echo_decay {
+            self.decay
+        } else if mild {
+            self.mild_decay
+        } else {
+            self.decay
+        }
     }
 
     pub fn dump(&self, dumper: &ApmDataDumper) {
@@ -430,4 +440,35 @@ fn analyze_block_gain(
     let decaying_gain = gain > floor_gain;
     *previous_gain = gain;
     (block_adapting, decaying_gain)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `mild` selects `ep_strength.nearend_len`, used during dominant nearend.
+    #[test]
+    fn mild_decay_follows_nearend_len() {
+        let mut config = EchoCanceller3Config::default();
+        config.ep_strength.default_len = 0.9;
+        config.ep_strength.nearend_len = 0.5;
+        let estimator = ReverbDecayEstimator::new(&config);
+
+        assert_eq!(0.9, estimator.decay(/*mild=*/ false));
+        assert_eq!(0.5, estimator.decay(/*mild=*/ true));
+    }
+
+    /// A negative `default_len` selects adaptive decay, which ignores `mild`.
+    #[test]
+    fn adaptive_decay_ignores_mild() {
+        let mut config = EchoCanceller3Config::default();
+        config.ep_strength.default_len = -0.9;
+        config.ep_strength.nearend_len = 0.5;
+        let estimator = ReverbDecayEstimator::new(&config);
+
+        assert_eq!(
+            estimator.decay(/*mild=*/ false),
+            estimator.decay(/*mild=*/ true)
+        );
+    }
 }

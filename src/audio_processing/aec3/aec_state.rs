@@ -120,16 +120,13 @@ impl AecState {
         self.config.echo_audibility.use_stationarity_properties
     }
 
-    pub fn erle(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
-        self.erle_estimator.erle()
+    pub fn erle(&self, onset_compensated: bool) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
+        self.erle_estimator.erle(onset_compensated)
     }
 
-    pub fn erle_uncertainty(&self) -> Option<f32> {
-        if self.saturated_echo() {
-            Some(1.0)
-        } else {
-            None
-        }
+    /// The uncapped ERLE, used for the dominant nearend decision.
+    pub fn erle_unbounded(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
+        self.erle_estimator.erle_unbounded()
     }
 
     pub fn fullband_erle_log2(&self) -> f32 {
@@ -185,8 +182,8 @@ impl AecState {
         self.filter_quality_state.reset();
     }
 
-    pub fn reverb_decay(&self) -> f32 {
-        self.reverb_model_estimator.reverb_decay()
+    pub fn reverb_decay(&self, mild: bool) -> f32 {
+        self.reverb_model_estimator.reverb_decay(mild)
     }
 
     pub fn get_reverb_frequency_response(&self) -> &[f32; FFT_LENGTH_BY_2_PLUS_1] {
@@ -273,7 +270,7 @@ impl AecState {
         compute_avg_render_reverb(
             render_buffer.spectrum_buffer(),
             min_delay,
-            self.reverb_decay(),
+            self.reverb_decay(/*mild=*/ false),
             &mut self.avg_render_reverb,
             &mut avg_render_spectrum_with_reverb,
         );
@@ -359,7 +356,7 @@ impl AecState {
         self.data_dumper.dump_raw_f32_slice(
             DiagnosticLevel::DeepDebug,
             "aec3_erle",
-            &self.erle()[0],
+            &self.erle(/*onset_compensated=*/ false)[0],
         );
         self.data_dumper.dump_raw_f32(
             DiagnosticLevel::Production,
@@ -441,7 +438,7 @@ impl EchoRemoverMetricsAecState for AecState {
     }
 
     fn erle(&self) -> &[f32; FFT_LENGTH_BY_2_PLUS_1] {
-        &self.erle_estimator.erle()[0]
+        &self.erle_estimator.erle(/*onset_compensated=*/ false)[0]
     }
 
     fn fullband_erle_log2(&self) -> f32 {
@@ -665,7 +662,7 @@ mod tests {
 
         assert!(state.usable_linear_estimate());
         {
-            let erle = state.erle()[0];
+            let erle = state.erle(/*onset_compensated=*/ true)[0];
             assert_eq!(erle[0], erle[1]);
             const LOW_FREQUENCY_LIMIT: usize = 32;
             for k in (2..LOW_FREQUENCY_LIMIT).step_by(2) {
@@ -702,7 +699,7 @@ mod tests {
 
         assert!(state.usable_linear_estimate());
         {
-            let erle = state.erle()[0];
+            let erle = state.erle(/*onset_compensated=*/ true)[0];
             assert_eq!(erle[0], erle[1]);
             const LOW_FREQUENCY_LIMIT: usize = 32;
             for k in 1..LOW_FREQUENCY_LIMIT {

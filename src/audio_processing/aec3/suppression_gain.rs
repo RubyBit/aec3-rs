@@ -93,6 +93,10 @@ impl SuppressionGain {
         }
     }
 
+    pub fn is_dominant_nearend(&self) -> bool {
+        self.nearend_detector.is_nearend_state()
+    }
+
     pub fn set_initial_state(&mut self, state: bool) {
         self.initial_state = state;
         if state {
@@ -108,6 +112,7 @@ impl SuppressionGain {
         nearend_spectrum: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         echo_spectrum: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         residual_echo_spectrum: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
+        residual_echo_spectrum_unbounded: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         comfort_noise_spectrum: &[[f32; FFT_LENGTH_BY_2_PLUS_1]],
         render_signal_analyzer: &RenderSignalAnalyzer,
         aec_state: &AecState,
@@ -124,9 +129,21 @@ impl SuppressionGain {
         assert_eq!(comfort_noise_spectrum.len(), self.num_capture_channels);
         assert!(render.num_channels() > 0);
 
+        // The dominant nearend decision uses the uncapped residual echo, so a
+        // well-converged filter is not penalised by the ERLE cap.
+        let echo_for_nearend_detection = if self
+            .config
+            .suppressor
+            .dominant_nearend_detection
+            .use_unbounded_echo_spectrum
+        {
+            residual_echo_spectrum_unbounded
+        } else {
+            residual_echo_spectrum
+        };
         self.nearend_detector.update(
             nearend_spectrum,
-            residual_echo_spectrum,
+            echo_for_nearend_detection,
             comfort_noise_spectrum,
             self.initial_state,
         );
@@ -702,6 +719,71 @@ mod tests {
     /// The band-29 bound is part of conservative HF suppression, which is off
     /// by default upstream. Enabling it must not be a no-op, and leaving it off
     /// must leave the accurate bands untouched.
+    /// The dominant nearend decision uses the uncapped residual echo when
+    /// `use_unbounded_echo_spectrum` is set. The uncapped spectrum is the
+    /// smaller of the two, so it makes nearend detection easier.
+    #[test]
+    fn unbounded_echo_spectrum_selects_the_nearend_detector_input() {
+        const NUM_CHANNELS: usize = 1;
+
+        let detect_nearend = |use_unbounded: bool| -> bool {
+            let mut config = EchoCanceller3Config::default();
+            config
+                .suppressor
+                .dominant_nearend_detection
+                .use_unbounded_echo_spectrum = use_unbounded;
+            let mut gain =
+                SuppressionGain::new(config, detect_optimization(), 16_000, NUM_CHANNELS);
+            gain.set_initial_state(false);
+
+            let aec_state = AecState::new(EchoCanceller3Config::default(), NUM_CHANNELS);
+            let analyzer = RenderSignalAnalyzer::new(&EchoCanceller3Config::default());
+            let render = Block::new(1, 1);
+
+            // Strong nearend, quiet noise. The bounded residual echo is loud
+            // enough to block nearend detection, the unbounded one is not.
+            let mut nearend = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; NUM_CHANNELS];
+            let mut echo = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; NUM_CHANNELS];
+            let mut echo_unbounded = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; NUM_CHANNELS];
+            let mut noise = vec![[0.0f32; FFT_LENGTH_BY_2_PLUS_1]; NUM_CHANNELS];
+            for ch in 0..NUM_CHANNELS {
+                nearend[ch].fill(1000.0);
+                echo[ch].fill(1000.0);
+                echo_unbounded[ch].fill(1.0);
+                noise[ch].fill(0.001);
+            }
+
+            let mut high_bands_gain = 1.0f32;
+            let mut low_band_gain = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
+            // Long enough to pass the detector's trigger threshold.
+            for _ in 0..50 {
+                gain.get_gain(
+                    &nearend,
+                    &echo,
+                    &echo,
+                    &echo_unbounded,
+                    &noise,
+                    &analyzer,
+                    &aec_state,
+                    &render,
+                    false,
+                    Some(&mut high_bands_gain),
+                    Some(&mut low_band_gain),
+                );
+            }
+            gain.is_dominant_nearend()
+        };
+
+        assert!(
+            detect_nearend(true),
+            "the uncapped spectrum should let nearend be detected"
+        );
+        assert!(
+            !detect_nearend(false),
+            "the capped spectrum should keep the detector out of the nearend state"
+        );
+    }
+
     #[test]
     fn conservative_hf_suppression_gates_the_upper_band_bound() {
         let hf = HighFrequencySuppression {
@@ -789,8 +871,8 @@ mod tests {
         let analyzer = RenderSignalAnalyzer::new(&config);
         let aec_state = AecState::new(config, 1);
         gain.get_gain(
-            &spectrum, &spectrum, &spectrum, &spectrum, &analyzer, &aec_state, &render, false,
-            None, None,
+            &spectrum, &spectrum, &spectrum, &spectrum, &spectrum, &analyzer, &aec_state, &render,
+            false, None, None,
         );
     }
 
@@ -874,6 +956,7 @@ mod tests {
                 &e2,
                 &s2,
                 &r2,
+                &r2,
                 &n2,
                 &analyzer,
                 &aec_state,
@@ -910,6 +993,7 @@ mod tests {
                 &e2,
                 &s2,
                 &r2,
+                &r2,
                 &n2,
                 &analyzer,
                 &aec_state,
@@ -930,6 +1014,7 @@ mod tests {
             suppression_gain.get_gain(
                 &e2,
                 &s2,
+                &r2,
                 &r2,
                 &n2,
                 &analyzer,

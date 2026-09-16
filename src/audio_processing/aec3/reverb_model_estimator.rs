@@ -60,8 +60,8 @@ impl ReverbModelEstimator {
         }
     }
 
-    pub fn reverb_decay(&self) -> f32 {
-        self.reverb_decay_estimators[0].decay()
+    pub fn reverb_decay(&self, mild: bool) -> f32 {
+        self.reverb_decay_estimators[0].decay(mild)
     }
 
     pub fn get_reverb_frequency_response(&self) -> &[f32; FFT_LENGTH_BY_2_PLUS_1] {
@@ -169,7 +169,7 @@ mod tests {
                     false,
                 );
             }
-            self.estimated_decay = estimator.reverb_decay();
+            self.estimated_decay = estimator.reverb_decay(/*mild=*/ false);
             self.estimated_power_tail = estimator.get_reverb_frequency_response().iter().sum();
         }
 

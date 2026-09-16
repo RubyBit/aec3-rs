@@ -137,6 +137,7 @@ impl EchoCanceller3Config {
 
         res &= limit_f32(&mut c.ep_strength.default_gain, 0.0, 1_000_000.0);
         res &= limit_f32(&mut c.ep_strength.default_len, -1.0, 1.0);
+        res &= limit_f32(&mut c.ep_strength.nearend_len, -1.0, 1.0);
 
         const MAX_POWER: f32 = 32_768.0 * 32_768.0;
         res &= limit_f32(&mut c.echo_audibility.low_render_limit, 0.0, MAX_POWER);
@@ -563,8 +564,13 @@ impl Default for Erle {
 pub struct EpStrength {
     pub default_gain: f32,
     pub default_len: f32,
+    /// Milder reverb decay, used while the dominant nearend state is active.
+    pub nearend_len: f32,
     pub echo_can_saturate: bool,
     pub bounded_erl: bool,
+    /// Uses the onset-compensated ERLE during the dominant nearend state as
+    /// well. When false, the uncompensated ERLE is used there.
+    pub erle_onset_compensation_in_dominant_nearend: bool,
     /// Raises the estimated reverb tail frequency response to at least the
     /// measured tail of the linear filter, rather than trusting the decay
     /// extrapolation alone.
@@ -576,8 +582,10 @@ impl Default for EpStrength {
         Self {
             default_gain: 1.0,
             default_len: 0.83,
+            nearend_len: 0.83,
             echo_can_saturate: true,
             bounded_erl: false,
+            erle_onset_compensation_in_dominant_nearend: false,
             use_conservative_tail_frequency_response: true,
         }
     }
@@ -765,6 +773,7 @@ impl Default for Suppressor {
                 hold_duration: 50,
                 trigger_threshold: 12,
                 use_during_initial_phase: true,
+                use_unbounded_echo_spectrum: true,
             },
             subband_nearend_detection: SubbandNearendDetection {
                 nearend_average_blocks: 1,
@@ -839,6 +848,8 @@ pub struct DominantNearendDetection {
     pub hold_duration: usize,
     pub trigger_threshold: usize,
     pub use_during_initial_phase: bool,
+    /// Feeds the uncapped residual echo spectrum to the nearend detector.
+    pub use_unbounded_echo_spectrum: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -957,6 +968,18 @@ mod tests {
         assert_eq!(5, config.suppressor.last_lf_smoothing_band);
         assert_eq!(5, config.suppressor.last_lf_band);
         assert_eq!(8, config.suppressor.first_hf_band);
+        assert_eq!(0.83, config.ep_strength.nearend_len);
+        assert!(
+            !config
+                .ep_strength
+                .erle_onset_compensation_in_dominant_nearend
+        );
+        assert!(
+            config
+                .suppressor
+                .dominant_nearend_detection
+                .use_unbounded_echo_spectrum
+        );
     }
 
     #[test]

@@ -8,51 +8,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `audio_processing::post_filter::PostFilter`, ported from WebRTC's
-  `post_filter.{h,cc}`. A 4-section Chebyshev type 2 low-pass that removes
-  content above 19.5 kHz. `create_if_needed` returns `None` below 48 kHz.
+- `audio_processing::post_filter::PostFilter`, a 4-section Chebyshev type 2
+  low-pass that removes content above 19.5 kHz. `create_if_needed` returns `None`
+  below 48 kHz, where no filtering is required.
 - `nodes::post_filter`, the corresponding graph node. Pass-through below 48 kHz.
 - `pipelines::linear::LinearPipelineBuilder::enable_post_filter` (`true`),
   `LinearPipeline::reset_post_filter`, and `LinearPipelineHandles::post_filter`.
 - `CascadedBiQuadFilter::from_coefficients`, for cascades whose stages have
   different coefficients.
 - `audio_processing::aec3::block::Block`, a contiguous multiband, multichannel
-  block, ported from WebRTC's `block.h`.
+  block.
 - `EchoCanceller3::set_capture_output_usage`, also on the `EchoControl` trait
   (default no-op) and on `BlockProcessor`/`EchoRemover`. When the capture output
   is unused, the residual echo estimate, suppression gain and suppression filter
   are skipped and the capture block passes through untouched; the linear filter
-  keeps adapting. Ported from WebRTC's `SetCaptureOutputUsage`.
+  keeps adapting.
 - `nodes::aec3` gains a `capture_output_used_in` control port, matching the port
   `nodes::agc2` already has.
-- Config fields the reference exposes but this crate hardcoded or omitted:
-  `delay.delay_estimate_smoothing_delay_found` (`0.7`),
+- `AecState::erle_unbounded` and `ErleEstimator::erle_unbounded`, the ERLE
+  without the `erle.max_l`/`erle.max_h` cap.
+- Config fields that were previously hardcoded or absent, all validated and
+  clamped: `delay.delay_estimate_smoothing_delay_found` (`0.7`),
   `filter.high_pass_filter_echo_reference` (`false`), a `comfort_noise` section
-  with `noise_floor_dbfs` (`-96.03406`), and on `suppressor`:
-  `lf_smoothing_during_initial_phase` (`true`),
+  with `noise_floor_dbfs` (`-96.03406`), `ep_strength.nearend_len` (`0.83`),
+  `ep_strength.erle_onset_compensation_in_dominant_nearend` (`false`), and on
+  `suppressor`: `lf_smoothing_during_initial_phase` (`true`),
   `last_permanent_lf_smoothing_band` (`0`), `last_lf_smoothing_band` (`5`),
-  `last_lf_band` (`5`), `first_hf_band` (`8`). All default to the reference
-  values and `validate` clamps them to the reference ranges.
+  `last_lf_band` (`5`), `first_hf_band` (`8`), and
+  `dominant_nearend_detection.use_unbounded_echo_spectrum` (`true`).
 
 ### Fixed
+- Behaviour: the dominant nearend decision runs against the uncapped residual
+  echo spectrum. It previously used the capped one, so a filter performing better
+  than `erle.max_l`/`erle.max_h` was not credited for it and nearend was
+  under-detected, over-suppressing doubletalk.
+- Behaviour: the residual echo estimate uses the uncompensated ERLE while the
+  dominant nearend state is active. It previously always used the
+  onset-compensated ERLE, which is lower, so the residual echo estimate was too
+  high during doubletalk. `erle_onset_compensation_in_dominant_nearend` restores
+  the old behaviour.
+- Behaviour: the reverb tail uses the milder `ep_strength.nearend_len` decay
+  during the dominant nearend state.
 - The render reference was always high-pass filtered on its way to the block
-  processor. The reference only does this when
-  `filter.high_pass_filter_echo_reference` is set, which is off by default, so
-  low frequencies were removed from the echo reference but not from capture.
-  Two unit tests had been written against the old behaviour.
-- Comfort noise is now estimated from the linear filter output spectrum when the
-  linear estimate is usable, as the reference does; it was always estimated from
-  the microphone spectrum, which still contains the echo and biases the noise
-  floor high. The nearend spectrum selection also now happens before the AEC
-  state update, matching the reference.
-- Behaviour: low-frequency gain smoothing in the suppressor now also covers
-  bands at or below `suppressor.last_permanent_lf_smoothing_band` when echo
-  exceeds nearend. With the default of `0`, band 0 is now smoothed in that case.
+  processor. It is now filtered only when `filter.high_pass_filter_echo_reference`
+  is set, which is off by default; low frequencies were being removed from the
+  echo reference but not from capture. Two unit tests had been written against
+  the old behaviour.
+- Comfort noise is estimated from the linear filter output spectrum when the
+  linear estimate is usable. It was always estimated from the microphone
+  spectrum, which still contains the echo and biases the noise floor high. The
+  nearend spectrum selection also now happens before the AEC state update.
+- Behaviour: low-frequency gain smoothing in the suppressor also covers bands at
+  or below `suppressor.last_permanent_lf_smoothing_band` when echo exceeds
+  nearend. With the default of `0`, band 0 is now smoothed in that case.
 
 ### Changed
-- Behaviour: `pipelines::linear` applies the fullband post filter by default, as
-  the reference does. At 48 kHz this attenuates content above 19.5 kHz; lower
-  rates are unaffected. Opt out with `enable_post_filter(false)`.
+- Behaviour: `pipelines::linear` applies the fullband post filter by default. At
+  48 kHz this attenuates content above 19.5 kHz; lower rates are unaffected. Opt
+  out with `enable_post_filter(false)`.
 - `MatchedFilter::new` takes a second smoothing value and `update` takes a
   `use_slow_smoothing` flag, so the delay estimator can switch to
   `delay.delay_estimate_smoothing_delay_found` once
@@ -66,11 +79,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EchoRemover`, `RenderDelayBuffer`, `RenderDelayController`,
   `EchoPathDelayEstimator`, `Subtractor`, `SuppressionGain`, `SuppressionFilter`,
   `AlignmentMixer`, `FrameBlocker`, `BlockFramer`, `BlockBuffer` and
-  `RenderBuffer::block`. Frames and subframes are unchanged, as upstream.
+  `RenderBuffer::block`. Frames and subframes are unchanged.
 - `BlockBuffer::new` no longer takes a frame length; a block is always
   `BLOCK_SIZE` samples.
+- `SubbandErleEstimator` and `SignalDependentErleEstimator` keep the ERLE without
+  onset handling separately from the onset-compensated one, and the subband
+  estimator additionally keeps an uncapped stream. The `erle` accessors on those
+  types, on `ErleEstimator` and on `AecState` take an `onset_compensated` flag.
+- `ResidualEchoEstimator::estimate` takes `dominant_nearend` and fills a second,
+  uncapped residual echo spectrum; `SuppressionGain::get_gain` takes it too.
+- `ReverbDecayEstimator::decay`, `ReverbModelEstimator::reverb_decay` and
+  `AecState::reverb_decay` take a `mild` flag.
 
 ### Removed
+- `AecState::erle_uncertainty` and the residual echo estimator branch using it.
+  It returned a value only when the echo was saturated, which the caller already
+  handled first, so the branch was unreachable.
 - Four `#[should_panic]` tests that asserted a wrongly sized block is rejected at
   runtime. `Block` makes the size structural, so those inputs cannot be
   constructed.

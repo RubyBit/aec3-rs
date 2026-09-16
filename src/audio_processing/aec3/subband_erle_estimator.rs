@@ -6,6 +6,8 @@ const X2_BAND_ENERGY_THRESHOLD: f32 = 44_015_068.0;
 const BLOCKS_TO_HOLD_ERLE: i32 = 100;
 const BLOCKS_FOR_ONSET_DETECTION: i32 = BLOCKS_TO_HOLD_ERLE + 150;
 const POINTS_TO_ACCUMULATE: usize = 6;
+/// Cap for the unbounded ERLE stream; high enough to be effectively no cap.
+const UNBOUNDED_ERLE_MAX: f32 = 100_000.0;
 
 fn set_max_erle_bands(max_erle_l: f32, max_erle_h: f32) -> [f32; FFT_LENGTH_BY_2_PLUS_1] {
     let mut max_erle = [max_erle_h; FFT_LENGTH_BY_2_PLUS_1];
@@ -19,13 +21,33 @@ fn use_min_erle_during_onsets() -> bool {
     true
 }
 
+fn update_erle_band(
+    erle: &mut f32,
+    new_erle: f32,
+    low_render_energy: bool,
+    min_erle: f32,
+    max_erle: f32,
+) {
+    let mut alpha = 0.05;
+    if new_erle < *erle {
+        alpha = if low_render_energy { 0.0 } else { 0.1 };
+    }
+    *erle = (*erle + alpha * (new_erle - *erle)).clamp(min_erle, max_erle);
+}
+
 pub struct SubbandErleEstimator {
     use_onset_detection: bool,
     min_erle: f32,
     max_erle: [f32; FFT_LENGTH_BY_2_PLUS_1],
     use_min_erle_during_onsets: bool,
     accum_spectra: AccumulatedSpectra,
+    /// ERLE without special handling of render onsets.
     erle: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    /// ERLE lowered during render onsets.
+    erle_onset_compensated: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    /// ERLE without the `erle.max_l`/`erle.max_h` cap.
+    erle_unbounded: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    /// ERLE estimated during render onsets.
     erle_onsets: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
     coming_onset: Vec<[bool; FFT_LENGTH_BY_2_PLUS_1]>,
     hold_counters: Vec<[i32; FFT_LENGTH_BY_2_PLUS_1]>,
@@ -40,6 +62,8 @@ impl SubbandErleEstimator {
             use_min_erle_during_onsets: use_min_erle_during_onsets(),
             accum_spectra: AccumulatedSpectra::new(num_capture_channels),
             erle: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
+            erle_onset_compensated: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
+            erle_unbounded: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
             erle_onsets: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
             coming_onset: vec![[true; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
             hold_counters: vec![[0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
@@ -49,10 +73,10 @@ impl SubbandErleEstimator {
     }
 
     pub fn reset(&mut self) {
-        for erle in &mut self.erle {
-            erle.fill(self.min_erle);
-        }
-        for ch in 0..self.erle_onsets.len() {
+        for ch in 0..self.erle.len() {
+            self.erle[ch].fill(self.min_erle);
+            self.erle_onset_compensated[ch].fill(self.min_erle);
+            self.erle_unbounded[ch].fill(self.min_erle);
             self.erle_onsets[ch].fill(self.min_erle);
             self.coming_onset[ch].fill(true);
             self.hold_counters[ch].fill(0);
@@ -74,14 +98,28 @@ impl SubbandErleEstimator {
         if self.use_onset_detection {
             self.decrease_erle_per_band_for_low_render_signals();
         }
-        for erle in &mut self.erle {
-            erle[0] = erle[1];
-            erle[FFT_LENGTH_BY_2] = erle[FFT_LENGTH_BY_2 - 1];
+        for ch in 0..self.erle.len() {
+            for stream in [
+                &mut self.erle[ch],
+                &mut self.erle_onset_compensated[ch],
+                &mut self.erle_unbounded[ch],
+            ] {
+                stream[0] = stream[1];
+                stream[FFT_LENGTH_BY_2] = stream[FFT_LENGTH_BY_2 - 1];
+            }
         }
     }
 
-    pub fn erle(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
-        &self.erle
+    pub fn erle(&self, onset_compensated: bool) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
+        if onset_compensated && self.use_onset_detection {
+            &self.erle_onset_compensated
+        } else {
+            &self.erle
+        }
+    }
+
+    pub fn erle_unbounded(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
+        &self.erle_unbounded
     }
 
     pub fn erle_onsets(&self) -> &[[f32; FFT_LENGTH_BY_2_PLUS_1]] {
@@ -166,17 +204,30 @@ impl SubbandErleEstimator {
 
             for k in 1..FFT_LENGTH_BY_2 {
                 if updated[k] {
-                    let mut alpha = 0.05;
-                    if new_erle[k] < self.erle[ch][k] {
-                        alpha = if self.accum_spectra.low_render_energy[ch][k] {
-                            0.0
-                        } else {
-                            0.1
-                        };
+                    let low_render_energy = self.accum_spectra.low_render_energy[ch][k];
+                    update_erle_band(
+                        &mut self.erle[ch][k],
+                        new_erle[k],
+                        low_render_energy,
+                        self.min_erle,
+                        self.max_erle[k],
+                    );
+                    if self.use_onset_detection {
+                        update_erle_band(
+                            &mut self.erle_onset_compensated[ch][k],
+                            new_erle[k],
+                            low_render_energy,
+                            self.min_erle,
+                            self.max_erle[k],
+                        );
                     }
-                    self.erle[ch][k] = (self.erle[ch][k]
-                        + alpha * (new_erle[k] - self.erle[ch][k]))
-                        .clamp(self.min_erle, self.max_erle[k]);
+                    update_erle_band(
+                        &mut self.erle_unbounded[ch][k],
+                        new_erle[k],
+                        low_render_energy,
+                        self.min_erle,
+                        UNBOUNDED_ERLE_MAX,
+                    );
                 }
             }
         }
@@ -187,9 +238,9 @@ impl SubbandErleEstimator {
             for k in 1..FFT_LENGTH_BY_2 {
                 self.hold_counters[ch][k] -= 1;
                 if self.hold_counters[ch][k] <= (BLOCKS_FOR_ONSET_DETECTION - BLOCKS_TO_HOLD_ERLE) {
-                    if self.erle[ch][k] > self.erle_onsets[ch][k] {
-                        self.erle[ch][k] = self.erle_onsets[ch][k]
-                            .max(0.97 * self.erle[ch][k])
+                    if self.erle_onset_compensated[ch][k] > self.erle_onsets[ch][k] {
+                        self.erle_onset_compensated[ch][k] = self.erle_onsets[ch][k]
+                            .max(0.97 * self.erle_onset_compensated[ch][k])
                             .max(self.min_erle);
                     }
                     if self.hold_counters[ch][k] <= 0 {
@@ -259,9 +310,9 @@ mod tests {
 
         for k in 1..FFT_LENGTH_BY_2 {
             assert!(
-                (estimator.erle()[0][k] - 10.0).abs() < 1.0,
+                (estimator.erle(/*onset_compensated=*/ false)[0][k] - 10.0).abs() < 1.0,
                 "bin {k} deviated: {}",
-                estimator.erle()[0][k]
+                estimator.erle(/*onset_compensated=*/ false)[0][k]
             );
         }
     }
